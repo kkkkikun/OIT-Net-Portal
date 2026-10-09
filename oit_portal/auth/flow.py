@@ -67,14 +67,25 @@ class AuthFlow:
             return FlowResult(FlowOutcome.NO_NETWORK, detail=str(pr))
 
         # CAPTIVE：进入登录流程
-        if not pr.redirect_url:
-            return FlowResult(FlowOutcome.FAILED,
-                              detail="被劫持但未拿到 302 Location（200 注入式认证页），"
-                                     "请先运行 oit-portal capture 完成协议适配")
-        try:
-            challenge = PortalChallenge.from_redirect(pr.redirect_url)
-        except ProtocolMismatch as exc:
-            return FlowResult(FlowOutcome.FAILED, detail=str(exc))
+        if pr.redirect_url:
+            try:
+                challenge = PortalChallenge.from_redirect(pr.redirect_url)
+            except ProtocolMismatch as exc:
+                return FlowResult(FlowOutcome.FAILED, detail=str(exc))
+        else:
+            # 注入式劫持：穿过注入页/JS 跳转链寻找 OAuth 授权入口
+            from ..discover import follow_entry
+            try:
+                entry = follow_entry(self.session, self.cfg, [],
+                                     page_url=pr.probe_url, page_body=pr.body)
+                challenge = entry.challenge
+            except Exception:  # noqa: BLE001 - 发现失败按无挑战处理
+                challenge = None
+            if challenge is None:
+                return FlowResult(
+                    FlowOutcome.FAILED,
+                    detail="注入式认证页链路中未找到 OAuth 授权入口，"
+                           "请运行 oit-portal capture 完成协议适配")
 
         logger.info("捕获登录挑战 client_id=%s… eportal=%s",
                     challenge.client_id[:8], challenge.eportal_base)

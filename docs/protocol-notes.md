@@ -10,7 +10,7 @@
 
 | ID | 项目 | 状态 | 结论 |
 |----|------|------|------|
-| C1.1 | 未认证时 302 目标格式 | 已知 | `http://open.oit.edu.cn:8090/auth/oauth/authorize?response_type=code&client_id=b50485d1-4e49-4d54-95b4-491c0b69ce15&redirect_uri=http://172.16.11.54/eportal/login_sso.jsp?<加密参数>`（由用户提供的 URL 确认） |
+| C1.1 | 未认证时入口形态 | ✅ 已确认（2026-10-09 抓包报告实测） | AC 对探测 URL 返回 **200 注入 JS 跳转页**（`<script>top.self.location.href='http://172.16.11.54/eportal/index.jsp?wlanuserip=<hex>&...&t=wireless-v2'</script>`），**非 302**；链路：注入页 → ePortal index.jsp →（JS 跳）→ SSO `authorize`（带 client_id/redirect_uri）→ 登录表单。已由 `discover.py` 统一处理三种页面级跳转 |
 | C1.2 | SSO 会话 cookie 名 | 待确认 | `<CAPTURE:B-5>` |
 | C1.3 | ePortal 服务器地址 | 已知 | `http://172.16.11.54`（加密参数模式，`t=wireless-v2`） |
 

@@ -30,6 +30,7 @@ from .auth.eportal import EportalAdapter
 from .auth.models import AuthCode, PortalChallenge
 from .auth.sso import _rsa_encrypt
 from .config import Config
+from .discover import cookie_names, follow_entry
 from .log import get_logger
 from .paths import AppPaths
 from .probe import ProbeStatus, probe
@@ -41,15 +42,7 @@ _MAX_JS_FILES = 6
 _MAX_JS_BYTES = 300_000
 _USERNAME_HINT_RE = ("user", "account", "username", "xh", "stu", "login")
 
-# 注入式认证页里的 meta refresh 跳转（部分 AC 注入的是「跳转中」页而非表单本体）
-_META_REFRESH_RE = re.compile(
-    r"http-equiv=['\"]?refresh['\"]?[^>]*content=['\"]?\d+\s*;\s*url=([^'\">]+)",
-    re.I)
-
-
-def _meta_refresh_target(html: str) -> str | None:
-    m = _META_REFRESH_RE.search(html[:16384])
-    return m.group(1).strip() if m else None
+# 注入式认证页的页面级跳转（meta refresh / JS location）由 discover.redirect_target 统一识别
 
 
 @dataclass
@@ -75,12 +68,6 @@ def _make_session(cfg: Config) -> requests.Session:
     return session
 
 
-def _cookie_names(resp: requests.Response) -> str:
-    raw = resp.headers.get("Set-Cookie", "")
-    names = [part.split("=", 1)[0].strip() for part in raw.split(",") if "=" in part]
-    return ",".join(n for n in names if n) or "-"
-
-
 def _walk(session: requests.Session, url: str, cfg: Config,
           hops: list[str]) -> tuple[requests.Response, str]:
     """手动跟随 30x 并记录每一跳，直到 200 / 出现 code / 跳数耗尽。"""
@@ -94,7 +81,7 @@ def _walk(session: requests.Session, url: str, cfg: Config,
         hops.append(f"GET {url} -> {resp.status_code}"
                     + (f" (Location: {resp.headers.get('Location', '')[:160]})"
                        if 300 <= resp.status_code < 400 else "")
-                    + f" [Set-Cookie: {_cookie_names(resp)}]")
+                    + f" [Set-Cookie: {cookie_names(resp)}]")
         if 300 <= resp.status_code < 400:
             location = resp.headers.get("Location", "")
             if not location:
@@ -246,49 +233,28 @@ def run_capture(cfg: Config, paths: AppPaths) -> int:
         print("未检测到网络。请先连接校园 WiFi 再运行。")
         return 2
 
-    challenge = None
+    # ── 2. 入口链路：穿过 30x / 注入页 / 页面级跳转，停在登录表单 ──
+    print("== 第 2 步：跟随入口链路，定位登录表单 ==")
     if pr.redirect_url:
-        # ── 302 劫持形态：解析 OAuth 挑战并跟随跳转链 ──────────
-        try:
-            challenge = PortalChallenge.from_redirect(pr.redirect_url)
-        except Exception as exc:  # noqa: BLE001
-            _write_report(report, "302 解析失败",
-                          [("探测", pr_lines), ("跳转链", hops),
-                           ("错误", [f"{type(exc).__name__}: {exc}"])])
-            print(f"302 Location 解析失败：{exc}\n请把 {report} 发给维护者。")
-            return 1
         hops.append(f"探测点 {pr.probe_url} -> 302 (Location: {pr.redirect_url[:200]})")
-
-        print("== 第 2 步：跟随跳转链，分析登录表单 ==")
-        try:
-            resp, final_url = _walk(session, challenge.authorize_url, cfg, hops)
-        except requests.RequestException as exc:
-            _write_report(report, "跳转链中断",
-                          [("探测", pr_lines), ("跳转链", hops)])
-            print(f"跳转链请求失败：{exc}")
-            return 1
     else:
-        # ── 200 注入式形态：探测响应本身即（或包含）登录页 ─────
-        print("== 第 2 步：检测到 200 注入式认证页（无 302 跳转）==")
-        body = pr.body or ""
-        target = _meta_refresh_target(body)
-        if target:
-            hops.append(f"探测点 {pr.probe_url} -> 200 注入页，"
-                        f"跟随页面跳转目标 {target[:120]}")
-            try:
-                resp, final_url = _walk(session, urljoin(pr.probe_url, target),
-                                        cfg, hops)
-            except requests.RequestException as exc:
-                _write_report(report, "注入页跳转中断",
-                              [("探测", pr_lines), ("跳转链", hops)])
-                print(f"注入页跳转请求失败：{exc}")
-                return 1
-        else:
-            # 无 meta 跳转：注入的就是表单页本体，直接分析
-            resp = SimpleNamespace(text=body, headers={}, status_code=200,
-                                   url=pr.probe_url)
-            final_url = pr.probe_url
-            hops.append(f"探测点 {pr.probe_url} -> 200 注入页（直接作为表单页分析）")
+        hops.append(f"探测点 {pr.probe_url} -> 200 注入页（跟随页面跳转链）")
+    try:
+        entry = follow_entry(session, cfg, hops,
+                             redirect_url=pr.redirect_url,
+                             page_url=None if pr.redirect_url else pr.probe_url,
+                             page_body=None if pr.redirect_url else pr.body)
+    except requests.RequestException as exc:
+        _write_report(report, "入口链路中断", [("探测", pr_lines), ("跳转链", hops)])
+        print(f"入口链路请求失败：{exc}")
+        return 1
+    except Exception as exc:  # noqa: BLE001 - from_redirect 等协议错误
+        _write_report(report, "入口解析失败",
+                      [("探测", pr_lines), ("跳转链", hops),
+                       ("错误", [f"{type(exc).__name__}: {exc}"])])
+        print(f"入口链路解析失败：{exc}\n请把 {report} 发给维护者。")
+        return 1
+    challenge, resp, final_url = entry.challenge, entry.resp, entry.final_url
 
     if _code_in(final_url):
         # 会话仍有效，authorize 直接发了 code——无需账密即可验证整条链路
@@ -311,7 +277,7 @@ def run_capture(cfg: Config, paths: AppPaths) -> int:
     info = analyze_form(session, cfg, final_url, resp.text)
     for line in _summarize_form(info):
         print(f"  {line}")
-    hops.append(f"表单页 {final_url} [Set-Cookie: {_cookie_names(resp)}]")
+    hops.append(f"表单页 {final_url} [Set-Cookie: {cookie_names(resp)}]")
 
     if not info.endpoint:
         _write_report(report, "未找到登录表单", [

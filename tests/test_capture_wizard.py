@@ -70,7 +70,7 @@ class FakeCampusHandler(BaseHTTPRequestHandler):
                 self.send_header("Content-Length", "0")
                 self.end_headers()
             elif STATE.get("transparent"):
-                # 注入式劫持形态：探测点直接返回 200 认证页（无 302）
+                # 注入式劫持形态 A：注入页即表单本体（无 302、无页面跳转）
                 form = (
                     f'<form action="{self.base}/do_login" method="post">'
                     '<input type="text" name="username">'
@@ -79,8 +79,18 @@ class FakeCampusHandler(BaseHTTPRequestHandler):
                     "</form>"
                 )
                 self._page(form)
+            elif STATE.get("injected_chain"):
+                # 注入式劫持形态 B（用户学校实测）：注入 JS 跳转页 → ePortal
+                # index.jsp → 再 JS 跳 SSO authorize → 302 → 登录表单
+                self._page(
+                    "<script>top.self.location.href="
+                    f"'{self.base}/eportal/index.jsp?wlanuserip=ee5b&t=wireless-v2'"
+                    "</script>")
             else:
                 self._redirect(authorize)
+        elif "/eportal/index.jsp" in path:
+            # ePortal 入口页：JS 跳转 SSO authorize（用户学校链路的第二跳）
+            self._page(f"<script>location.href='{authorize}'</script>")
         elif "/auth/oauth/authorize2" in path:
             STATE["sso"] = True
             self._redirect(code_url)
@@ -212,6 +222,34 @@ def test_capture_wizard_transparent_mode(campus_server, tmp_path, monkeypatch):
     assert "登录成功" in report
     assert "200 注入页" in report
     assert PASSWORD not in report
+
+
+def test_capture_wizard_injected_js_chain(campus_server, tmp_path, monkeypatch):
+    """用户学校实测链路端到端：探测点 200 注入 JS 页 → ePortal index.jsp
+    → JS 跳 SSO authorize → 302 登录表单 → POST → code → 上线。"""
+    STATE["injected_chain"] = True
+    answers = iter(["", ""])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+    monkeypatch.setattr("getpass.getpass", lambda prompt="": PASSWORD)
+    monkeypatch.setattr(sys, "stdin", SimpleNamespace(isatty=lambda: True))
+
+    cfg = make_config(tmp_path)
+    cfg.probe.urls = [f"{campus_server}/generate_204", f"{campus_server}/gen2"]
+    home = tmp_path / "home"
+    paths = AppPaths(home=home, config=home / "config.toml",
+                     credentials=home / "credentials.toml",
+                     session=home / "session.json", log_dir=tmp_path / "logs",
+                     log_file=tmp_path / "logs" / "l.log",
+                     lock=tmp_path / "l.lock", pid=tmp_path / "l.pid")
+
+    rc = run_capture(cfg, paths)
+    assert rc == 0
+    report = (home / "capture-report.txt").read_text(encoding="utf-8")
+    assert "登录成功" in report
+    assert "/eportal/index.jsp" in report  # 链路经过了 ePortal 入口页
+    assert PASSWORD not in report
+    session_data = json.loads((home / "session.json").read_text(encoding="utf-8"))
+    assert any(c["name"] == "JSESSIONID" for c in session_data)
 
 
 def test_capture_wizard_wrong_password(campus_server, tmp_path, monkeypatch):
