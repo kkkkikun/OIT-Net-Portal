@@ -97,8 +97,32 @@ class FakeCampusHandler(BaseHTTPRequestHandler):
         elif "/auth/oauth/authorize" in path:
             if STATE.get("sso"):  # 会话复用直接发码
                 self._redirect(code_url)
+            elif STATE.get("vue_login"):
+                # 用户学校实测形态：authorize 直接返回 Vue SPA 登录页（无 <form>），
+                # 密码 AES 加密的内联脚本 + 外链 login.js 里的接口调用
+                vue_page = (
+                    "<!doctype html><html><head>"
+                    '<script src="/static/framework/vue/vue.min.js"></script>'
+                    '<script src="/static/framework/crypto-js-3.3.0/crypto-js.js"></script>'
+                    '<script src="/static/auth/login.js"></script>'
+                    "<script>Vue.prototype.$encrypt = function(str) {"
+                    "key = CryptoJS.enc.Utf8.parse('563a38b893f98998d4917875837ee800'"
+                    ".substr(0,16));"
+                    "iv = CryptoJS.enc.Utf8.parse('563a38b893f98998d4917875837ee800'"
+                    ".substr(0,16));"
+                    "var encrypted = CryptoJS.AES.encrypt(str, key, {iv: iv,"
+                    " mode: CryptoJS.mode.CBC, padding: CryptoJS.pad.ZeroPadding});"
+                    "return encrypted;}</script></head>"
+                    '<body class="auth okta-container"><div id="app"></div></body></html>'
+                )
+                self._page(vue_page, cookie="SID=sso-sess-1")
             else:
                 self._redirect(f"{self.base}/login")
+        elif path.startswith("/static/auth/login.js"):
+            self._page('axios.post("/auth/oauth/login",'
+                       '{username:this.username,password:this.$encrypt(this.password)});')
+        elif path.startswith("/static/framework/"):
+            self._page("/* framework lib */")
         elif path.startswith("/login"):
             form = (
                 '<form action="/do_login" method="post">'
@@ -117,14 +141,33 @@ class FakeCampusHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         length = int(self.headers.get("Content-Length", 0))
-        body = self.rfile.read(length).decode("utf-8")
+        raw = self.rfile.read(length).decode("utf-8")
         if self.path.startswith("/do_login"):
-            ok = (f"username={USER}" in body and f"password={PASSWORD}" in body
-                  and f"lt={LT_TOKEN}" in body)
+            ok = (f"username={USER}" in raw and f"password={PASSWORD}" in raw
+                  and f"lt={LT_TOKEN}" in raw)
             if ok:
                 self._redirect(f"{self.base}/auth/oauth/authorize2?c=1")
             else:
                 self._page("账号或密码错误")
+        elif self.path.startswith("/auth/oauth/login"):
+            # Vue SPA 接口：校验 AES 加密密码（与服务端真实行为一致：先解密再比对）
+            from urllib.parse import parse_qs
+            from Crypto.Cipher import AES
+            fields = parse_qs(raw)
+            user = fields.get("username", [""])[0]
+            cipher_b64 = fields.get("password", [""])[0]
+            try:
+                plain_bytes = AES.new(b"563a38b893f98998", AES.MODE_CBC,
+                                      b"563a38b893f98998").decrypt(
+                    __import__("base64").b64decode(cipher_b64))
+                plain = plain_bytes.rstrip(b"\x00").decode("utf-8")
+            except Exception:
+                plain = ""
+            if user == USER and plain == PASSWORD:
+                STATE["sso"] = True
+                self._redirect(f"{self.base}/auth/oauth/authorize2?c=1")
+            else:
+                self._page('{"error":"密码错误"}')
         else:
             self._page("not found", status=404)
 
@@ -250,6 +293,44 @@ def test_capture_wizard_injected_js_chain(campus_server, tmp_path, monkeypatch):
     assert PASSWORD not in report
     session_data = json.loads((home / "session.json").read_text(encoding="utf-8"))
     assert any(c["name"] == "JSESSIONID" for c in session_data)
+
+
+def test_capture_wizard_vue_spa_aes(campus_server, tmp_path, monkeypatch):
+    """用户学校最新实测形态端到端：注入 JS 页 → index.jsp → authorize 返回
+    Vue SPA（无表单、AES 内联加密脚本）→ 扫描 login.js 找到接口 →
+    AES 加密密码 POST → code → 上线 → 写含 AES 参数的 protocol.json。"""
+    STATE["injected_chain"] = True
+    STATE["vue_login"] = True
+    answers = iter(["", ""])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+    monkeypatch.setattr("getpass.getpass", lambda prompt="": PASSWORD)
+    monkeypatch.setattr(sys, "stdin", SimpleNamespace(isatty=lambda: True))
+
+    cfg = make_config(tmp_path)
+    cfg.probe.urls = [f"{campus_server}/generate_204", f"{campus_server}/gen2"]
+    home = tmp_path / "home"
+    paths = AppPaths(home=home, config=home / "config.toml",
+                     credentials=home / "credentials.toml",
+                     session=home / "session.json", log_dir=tmp_path / "logs",
+                     log_file=tmp_path / "logs" / "l.log",
+                     lock=tmp_path / "l.lock", pid=tmp_path / "l.pid")
+
+    rc = run_capture(cfg, paths)
+    assert rc == 0
+
+    protocol = json.loads((home / "protocol.json").read_text(encoding="utf-8"))
+    assert protocol["sso"]["login_endpoint"] == "/auth/oauth/login"
+    assert protocol["sso"]["username_field"] == "username"
+    assert protocol["sso"]["password_field"] == "password"
+    assert protocol["sso"]["password_encrypt"] == "aes_cbc"
+    assert protocol["sso"]["aes_key"] == "563a38b893f98998"
+    assert protocol["sso"]["aes_iv"] == "563a38b893f98998"
+    assert protocol["sso"]["aes_padding"] == "zero"
+    assert protocol["eportal"]["online_mode"] == "sso_pass"
+
+    report = (home / "capture-report.txt").read_text(encoding="utf-8")
+    assert "登录成功" in report
+    assert PASSWORD not in report
 
 
 def test_capture_wizard_wrong_password(campus_server, tmp_path, monkeypatch):

@@ -79,3 +79,42 @@ def test_no_captcha_on_plain_form():
 
 def test_script_sources():
     assert htmlutil.script_sources(LOGIN_PAGE) == ["/static/js/login.js"]
+
+
+# 用户学校登录页的真实内联加密脚本（2026-10-09 抓包报告）
+VUE_ENCRYPT_SCRIPT = """
+Vue.prototype.$encrypt = function(str) {
+    key = CryptoJS.enc.Utf8.parse('563a38b893f98998d4917875837ee800'.substr(0,16));
+    iv = CryptoJS.enc.Utf8.parse('563a38b893f98998d4917875837ee800'.substr(0,16));
+    var encrypted = CryptoJS.AES.encrypt(str, key, {
+        iv: iv,
+        mode: CryptoJS.mode.CBC,
+        padding: CryptoJS.pad.ZeroPadding
+    });
+    return encrypted;
+}
+"""
+
+
+def test_find_aes_from_real_page_script():
+    aes = htmlutil.find_aes(VUE_ENCRYPT_SCRIPT)
+    assert aes is not None
+    assert aes["key"] == "563a38b893f98998"
+    assert aes["iv"] == "563a38b893f98998"
+    assert aes["mode"] == "CBC"
+    assert aes["padding"] == "zero"
+
+
+def test_find_aes_pkcs7_variant():
+    aes = htmlutil.find_aes(
+        "k=CryptoJS.enc.Utf8.parse('0123456789abcdef');"
+        "CryptoJS.AES.encrypt(s,k,{mode:CryptoJS.mode.ECB,"
+        "padding:CryptoJS.pad.Pkcs7})")
+    assert aes["key"] == "0123456789abcdef"
+    assert aes["iv"] == "0123456789abcdef"  # 仅一个 parse 时 iv 同 key
+    assert aes["mode"] == "ECB"
+    assert aes["padding"] == "pkcs7"
+
+
+def test_find_aes_absent_without_marker():
+    assert htmlutil.find_aes(LOGIN_PAGE) is None

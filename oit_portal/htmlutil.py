@@ -78,6 +78,43 @@ def find_rsa_key(text: str) -> tuple[str | None, str]:
     return None, ""
 
 
+# AES 前端加密检测（CryptoJS 惯用形态，实测见用户登录页内联脚本）：
+#   key = CryptoJS.enc.Utf8.parse('563a...800'.substr(0,16));
+#   iv  = CryptoJS.enc.Utf8.parse('563a...800'.substr(0,16));
+#   CryptoJS.AES.encrypt(str, key, {iv: iv, mode: CBC, padding: ZeroPadding})
+_AES_ENCRYPT_RE = re.compile(r"CryptoJS\.AES\.encrypt", re.I)
+_UTF8_PARSE_RE = re.compile(
+    r"Utf8\.parse\(\s*['\"]([^'\"]+)['\"]\s*(?:\.\s*substr\(\s*(\d+)\s*,\s*(\d+)\s*\))?",
+    re.I)
+_CRYPTOJS_PAD_RE = re.compile(r"padding:\s*CryptoJS\.pad\.(\w+)", re.I)
+_CRYPTOJS_MODE_RE = re.compile(r"mode:\s*CryptoJS\.mode\.(\w+)", re.I)
+
+
+def find_aes(text: str) -> dict | None:
+    """检测 CryptoJS AES 前端加密。返回 {key, iv, padding, mode} 或 None。"""
+    if not _AES_ENCRYPT_RE.search(text):
+        return None
+    parses = _UTF8_PARSE_RE.findall(text)
+    if not parses:
+        return None
+
+    def _apply(raw: str, start: str, length: str) -> str:
+        if not length:
+            return raw
+        return raw[int(start or 0):int(start or 0) + int(length)]
+
+    key = _apply(*parses[0])
+    iv = _apply(*parses[1]) if len(parses) > 1 else key
+    pad = _CRYPTOJS_PAD_RE.search(text)
+    mode = _CRYPTOJS_MODE_RE.search(text)
+    return {
+        "key": key,
+        "iv": iv,
+        "padding": "pkcs7" if pad and pad.group(1).lower() == "pkcs7" else "zero",
+        "mode": mode.group(1).upper() if mode else "CBC",
+    }
+
+
 def has_rsa_hint(text: str) -> bool:
     low = text.lower()
     return any(hint.lower() in low for hint in RSA_JS_HINTS)

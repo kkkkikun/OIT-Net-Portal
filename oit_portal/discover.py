@@ -55,10 +55,20 @@ def looks_authorize(url: str) -> bool:
     return "client_id" in qs and "redirect_uri" in qs
 
 
+_SET_COOKIE_ATTRS = {"expires", "path", "domain", "max-age", "secure", "httponly",
+                     "samesite", "version", "comment"}
+_COOKIE_NAME_EQ_RE = re.compile(r"(?:^|[,;]\s*)([A-Za-z_][\w\-]*)\s*=")
+
+
 def cookie_names(resp) -> str:
+    """提取 Set-Cookie 里的 cookie 名（多条以 , 相连；忽略 expires/max-age 等属性）。"""
     raw = resp.headers.get("Set-Cookie", "") if getattr(resp, "headers", None) else ""
-    names = [part.split("=", 1)[0].strip() for part in raw.split(",") if "=" in part]
-    return ",".join(n for n in names if n) or "-"
+    names: list[str] = []
+    for m in _COOKIE_NAME_EQ_RE.finditer(raw):
+        name = m.group(1)
+        if name.lower() not in _SET_COOKIE_ATTRS and name not in names:
+            names.append(name)
+    return ",".join(names) or "-"
 
 
 @dataclass

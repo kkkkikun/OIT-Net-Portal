@@ -35,9 +35,12 @@ CAPTURED = SimpleNamespace(
     username_field="username",
     password_field="password",
     extra_fields={},               # 表单 hidden 字段，如 {"lt": "...", "execution": "e1s1"}
-    # ── C2.6 密码前端加密："none" | "rsa" ──
+    # ── C2.6 密码前端加密："none" | "rsa" | "aes_cbc" | "aes_ecb" ──
     password_encrypt="none",
     rsa_public_key="<CAPTURE:C2.6>",   # password_encrypt=rsa 时必填（PEM 或 base64 DER）
+    aes_key="<CAPTURE:C2.6>",          # password_encrypt=aes_* 时必填（页面内联脚本的 key）
+    aes_iv="<CAPTURE:C2.6>",
+    aes_padding="zero",                # zero | pkcs7
     # ── C2.5 验证码 ──
     has_captcha=False,
     # 登录表单页的 HTML 特征（用于区分「需要账密」和「直接发 code」）
@@ -111,13 +114,19 @@ class SsoAdapter:
         return "<form" in head.lower()
 
     def _transform_password(self, raw: str) -> str:
-        if CAPTURED.password_encrypt == "none":
+        mode = CAPTURED.password_encrypt
+        if mode == "none":
             return raw
-        if CAPTURED.password_encrypt == "rsa":
+        if mode == "rsa":
             if _is_captured(CAPTURED.rsa_public_key):
                 raise ProtocolMismatch("rsa_public_key 尚未填充（protocol-notes C2.6）")
             return _rsa_encrypt(raw, CAPTURED.rsa_public_key)
-        raise ProtocolMismatch(f"未知加密方式 {CAPTURED.password_encrypt}")
+        if mode in ("aes_cbc", "aes_ecb"):
+            if _is_captured(CAPTURED.aes_key):
+                raise ProtocolMismatch("aes_key 尚未填充（protocol-notes C2.6）")
+            return _aes_encrypt(raw, CAPTURED.aes_key, CAPTURED.aes_iv, mode,
+                                CAPTURED.aes_padding)
+        raise ProtocolMismatch(f"未知加密方式 {mode}")
 
     # ── 策略 A：会话复用 ─────────────────────────────────────
 
@@ -210,3 +219,33 @@ def _rsa_encrypt(raw: str, public_key: str) -> str:
         return base64.b64encode(encrypted).decode("ascii")
     except (ValueError, binascii.Error) as exc:
         raise ProtocolMismatch(f"RSA 加密失败（公钥格式?）: {exc}") from exc
+
+
+def _aes_encrypt(raw: str, key: str, iv: str, mode: str, padding: str) -> str:
+    """复现 CryptoJS AES.encrypt(...).toString()（WordArray 密钥 → base64 密文）。
+
+    ZeroPadding 语义与 CryptoJS 一致：已对齐时不补整块（区别于 PKCS7）。
+    """
+    try:
+        from Crypto.Cipher import AES
+    except ImportError as exc:
+        raise ProtocolMismatch(
+            "需要 pycryptodome 才能复现 AES 密码加密：pip install pycryptodome"
+        ) from exc
+    k = key.encode("utf-8")
+    if len(k) not in (16, 24, 32):
+        raise ProtocolMismatch(f"AES key 长度非法：{len(k)} 字节（需 16/24/32）")
+    data = raw.encode("utf-8")
+    if padding == "pkcs7":
+        pad = 16 - len(data) % 16
+        data += bytes([pad]) * pad
+    else:  # zero padding
+        data += b"\x00" * ((-len(data)) % 16)
+    try:
+        if mode == "aes_ecb":
+            cipher = AES.new(k, AES.MODE_ECB)
+        else:
+            cipher = AES.new(k, AES.MODE_CBC, iv.encode("utf-8"))
+        return base64.b64encode(cipher.encrypt(data)).decode("ascii")
+    except ValueError as exc:
+        raise ProtocolMismatch(f"AES 加密失败（key/iv 长度?）: {exc}") from exc

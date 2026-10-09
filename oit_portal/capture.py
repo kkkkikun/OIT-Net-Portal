@@ -58,6 +58,12 @@ class FormInfo:
     rsa_key: str | None = None
     rsa_source: str = ""
     rsa_hint_only: bool = False        # 有加密迹象但未提取到公钥
+    aes_key: str | None = None         # CryptoJS AES（Vue/SPA 登录页常见）
+    aes_iv: str | None = None
+    aes_padding: str = "zero"          # zero | pkcs7
+    aes_mode: str = "CBC"
+    aes_source: str = ""
+    candidates: list[str] = field(default_factory=list)  # JS 扫描出的登录接口候选
 
 
 def _make_session(cfg: Config) -> requests.Session:
@@ -101,38 +107,43 @@ def _code_in(url: str) -> str | None:
 
 def analyze_form(session: requests.Session, cfg: Config, page_url: str,
                  html: str) -> FormInfo:
+    """分析登录页。Vue/SPA 页面无 <form> 也继续：加密信息与接口候选仍可提取。"""
     info = FormInfo(page_url=page_url)
     action = htmlutil.form_action(html)
-    if action is None or action == "":
-        return info
-    info.endpoint = urljoin(page_url, action)
+    if action:
+        info.endpoint = urljoin(page_url, action)
 
-    for name, value, itype in htmlutil.inputs(html):
-        info.inputs[name] = value
-        if itype not in ("hidden", "submit", "button", "checkbox", "radio"):
-            info.visible.append(name)
-        if itype == "password" and info.password_field is None:
-            info.password_field = name
+        for name, value, itype in htmlutil.inputs(html):
+            info.inputs[name] = value
+            if itype not in ("hidden", "submit", "button", "checkbox", "radio"):
+                info.visible.append(name)
+            if itype == "password" and info.password_field is None:
+                info.password_field = name
 
-    captcha_names = {n for n, _v, t in htmlutil.inputs(html)
-                     if t not in ("hidden", "submit", "button")
-                     and htmlutil.CAPTCHA_NAME_RE.search(n)}
-    info.has_captcha, img_reason = htmlutil.looks_like_captcha(html)
-    info.captcha_reason = info.captcha_reason or img_reason
+        captcha_names = {n for n, _v, t in htmlutil.inputs(html)
+                         if t not in ("hidden", "submit", "button")
+                         and htmlutil.CAPTCHA_NAME_RE.search(n)}
+        info.has_captcha, img_reason = htmlutil.looks_like_captcha(html)
+        info.captcha_reason = info.captcha_reason or img_reason
 
-    # 用户名字段：名字含常见提示词的非密码可见输入，排除验证码
-    candidates = [n for n in info.visible
-                  if n != info.password_field and n not in captcha_names]
-    info.username_field = next(
-        (n for n in candidates
-         if any(h in n.lower() for h in _USERNAME_HINT_RE)),
-        candidates[0] if candidates else None,
-    )
+        # 用户名字段：名字含常见提示词的非密码可见输入，排除验证码
+        candidates = [n for n in info.visible
+                      if n != info.password_field and n not in captcha_names]
+        info.username_field = next(
+            (n for n in candidates
+             if any(h in n.lower() for h in _USERNAME_HINT_RE)),
+            candidates[0] if candidates else None,
+        )
 
-    # RSA 检测：先扫页面自身，再扫同源外链 JS
-    key, source = htmlutil.find_rsa_key(html)
-    if key:
-        info.rsa_key, info.rsa_source = key, f"页面内联（{source}）"
+    # 加密检测（无论有无表单都执行——Vue 页面的加密脚本在 head 内联）
+    aes = htmlutil.find_aes(html)
+    if aes:
+        info.aes_key, info.aes_iv = aes["key"], aes["iv"]
+        info.aes_padding, info.aes_mode = aes["padding"], aes["mode"]
+        info.aes_source = "页面内联脚本"
+    rsa_key, rsa_source = htmlutil.find_rsa_key(html)
+    if rsa_key:
+        info.rsa_key, info.rsa_source = rsa_key, f"页面内联（{rsa_source}）"
     else:
         hint = htmlutil.has_rsa_hint(html)
         for src in htmlutil.script_sources(html)[:_MAX_JS_FILES]:
@@ -143,38 +154,95 @@ def analyze_form(session: requests.Session, cfg: Config, page_url: str,
                 js = session.get(js_url, timeout=cfg.advanced.timeout_sec).text
             except requests.RequestException:
                 continue
-            key, source = htmlutil.find_rsa_key(js[:_MAX_JS_BYTES])
-            if key:
-                info.rsa_key, info.rsa_source = key, f"外链 JS {src}（{source}）"
+            rsa_key, rsa_source = htmlutil.find_rsa_key(js[:_MAX_JS_BYTES])
+            if rsa_key:
+                info.rsa_key, info.rsa_source = rsa_key, f"外链 JS {src}（{rsa_source}）"
                 break
             hint = hint or htmlutil.has_rsa_hint(js[:_MAX_JS_BYTES])
         info.rsa_hint_only = hint and info.rsa_key is None
     return info
 
 
-def _transform_password(password: str, mode: str, rsa_key: str | None) -> str:
+_FRAMEWORK_JS_HINTS = ("framework", "jquery", "vue", "lodash", "weui", "qtip",
+                       "crypto", "keyboard", "weixin", "backstretch")
+# JS 里出现的登录类接口路径（SPA 的 axios/fetch 调用串）
+_LOGIN_EP_RE = re.compile(
+    r"['\"](?:https?://[^'\"\\\s]+)?(/[\w\-./]*(?:login|signin|token|doLogin)"
+    r"[\w\-./]*)['\"]", re.I)
+_STATIC_EXT = (".css", ".js", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico",
+               ".woff", ".woff2", ".ttf", ".map")
+
+
+def scan_login_endpoints(session: requests.Session, cfg: Config, page_url: str,
+                         html: str) -> list[str]:
+    """无 <form> 的 SPA 登录页：扫描同源脚本，收集登录接口路径候选。"""
+    srcs = dict.fromkeys(htmlutil.script_sources(html))
+
+    def priority(src: str) -> int:
+        low = src.lower()
+        if any(k in low for k in ("auth", "login", "app.", "main", "index")):
+            return 0
+        if any(k in low for k in _FRAMEWORK_JS_HINTS):
+            return 2   # 框架库放最后甚至跳过
+        return 1
+
+    found: list[str] = []
+    for src in sorted(srcs, key=priority)[:12]:
+        js_url = urljoin(page_url, src)
+        if urlsplit(js_url).netloc != urlsplit(page_url).netloc:
+            continue
+        try:
+            js = session.get(js_url, timeout=cfg.advanced.timeout_sec).text
+        except requests.RequestException:
+            continue
+        for m in _LOGIN_EP_RE.finditer(js[:_MAX_JS_BYTES]):
+            path = m.group(1).split("?")[0]
+            if path.lower().endswith(_STATIC_EXT):
+                continue
+            if path not in found:
+                found.append(path)
+    # 页面自身路径作为末位候选（部分 SPA 提交回当前地址）
+    own = urlsplit(page_url).path
+    if own and own not in found:
+        found.append(own)
+    return found
+
+
+def _transform_password(password: str, mode: str, info: FormInfo) -> str:
     if mode == "rsa":
-        return _rsa_encrypt(password, rsa_key or "")
+        return _rsa_encrypt(password, info.rsa_key or "")
+    if mode in ("aes_cbc", "aes_ecb"):
+        from .auth.sso import _aes_encrypt
+        return _aes_encrypt(password, info.aes_key or "", info.aes_iv or "",
+                            mode, info.aes_padding)
     return password
 
 
 def _attempt_login(session: requests.Session, cfg: Config, info: FormInfo,
-                   username: str, password: str, mode: str,
-                   hops: list[str]) -> tuple[str | None, requests.Response]:
+                   endpoint: str, kind: str, username: str, password: str,
+                   mode: str, hops: list[str]) -> tuple[str | None, requests.Response]:
     payload = {k: v for k, v in info.inputs.items()
                if k not in (info.username_field, info.password_field)}
     payload[info.username_field] = username
-    payload[info.password_field] = _transform_password(password, mode, info.rsa_key)
-    hops.append(f"POST {info.endpoint} 字段[{','.join(payload)}] 加密={mode}")
-    post = session.post(info.endpoint, data=payload, allow_redirects=False,
-                        timeout=cfg.advanced.timeout_sec)
+    payload[info.password_field] = _transform_password(password, mode, info)
+    hops.append(f"POST {endpoint} [{kind}] 字段[{','.join(payload)}] 加密={mode}")
+    kwargs = {"json" if kind == "json" else "data": payload}
+    post = session.post(endpoint, allow_redirects=False,
+                        timeout=cfg.advanced.timeout_sec, **kwargs)
     hops.append(f"  -> {post.status_code}"
                 + (f" (Location: {post.headers.get('Location', '')[:160]})"
                    if 300 <= post.status_code < 400 else ""))
     if 300 <= post.status_code < 400 and post.headers.get("Location"):
-        final, final_url = _walk(session, urljoin(info.endpoint,
+        final, final_url = _walk(session, urljoin(endpoint,
                                                   post.headers["Location"]), cfg, hops)
         return _code_in(final_url), final
+    # SPA JSON 响应：跳转 URL 藏在响应体里（{redirect:"http://...code=..."}）
+    for m in re.finditer(r"https?://[^'\"\\\s<>]+", post.text[:4096]):
+        url = m.group(0)
+        if any(k in url for k in ("code=", "authorize", "login_sso", "redirect")):
+            hops.append(f"  响应体发现跳转：{url[:160]}")
+            final, final_url = _walk(session, url, cfg, hops)
+            return _code_in(final_url), final
     return None, post
 
 
@@ -196,15 +264,24 @@ def _summarize_form(info: FormInfo) -> list[str]:
         rsa_desc = "仅发现加密迹象，未提取到公钥"
     else:
         rsa_desc = "未发现"
-    return [
+    if info.aes_key:
+        aes_desc = (f"AES-{info.aes_mode}（{info.aes_padding} 填充，"
+                    f"key={info.aes_key[:6]}***，来源={info.aes_source}）")
+    else:
+        aes_desc = "未发现"
+    lines = [
         f"表单页：{info.page_url}",
-        f"提交端点：{info.endpoint}",
+        f"提交端点：{info.endpoint or '无（SPA 动态渲染）'}",
         f"全部字段：{','.join(info.inputs)}",
         f"用户名字段：{info.username_field}（可见字段：{','.join(info.visible)}）",
         f"密码字段：{info.password_field}",
         f"验证码：{'有（' + info.captcha_reason + '）' if info.has_captcha else '未发现'}",
         f"RSA：{rsa_desc}",
+        f"AES：{aes_desc}",
     ]
+    if info.candidates:
+        lines.append(f"JS 扫描接口候选：{','.join(info.candidates)}")
+    return lines
 
 
 def run_capture(cfg: Config, paths: AppPaths) -> int:
@@ -280,13 +357,23 @@ def run_capture(cfg: Config, paths: AppPaths) -> int:
     hops.append(f"表单页 {final_url} [Set-Cookie: {cookie_names(resp)}]")
 
     if not info.endpoint:
-        _write_report(report, "未找到登录表单", [
-            ("探测", pr_lines),
-            ("跳转链", hops),
-            ("最终页面片段", [resp.text[:3000].replace("\n", " ")]),
-        ])
-        print(f"未解析出登录表单（可能是 JS 动态渲染）。请把 {report} 发给维护者。")
-        return 1
+        # Vue/SPA 页面无 <form>：扫描页面脚本寻找登录接口候选
+        print("  页面无 <form>（Vue/JS 动态渲染），扫描脚本寻找登录接口……")
+        info.candidates = scan_login_endpoints(session, cfg, final_url, resp.text)
+        for line in _summarize_form(info):
+            print(f"  {line}")
+        hops.append(f"JS 扫描接口候选：{info.candidates or '无'}")
+        if not info.candidates:
+            _write_report(report, "未找到登录表单与接口", [
+                ("探测", pr_lines),
+                ("跳转链", hops),
+                ("最终页面片段", [resp.text[:20000].replace("\n", " ")]),
+            ])
+            print(f"未找到登录表单，脚本扫描也无接口候选。请把 {report} 发给维护者。")
+            return 1
+        # SPA 无输入框可解析：字段名按通行约定猜测（用户名 username / 密码 password）
+        info.username_field = info.username_field or "username"
+        info.password_field = info.password_field or "password"
     if info.has_captcha:
         _write_report(report, "发现验证码", [("探测", pr_lines), ("跳转链", hops),
                                              ("表单分析", _summarize_form(info))])
@@ -312,30 +399,50 @@ def run_capture(cfg: Config, paths: AppPaths) -> int:
 
     # ── 4. 自动尝试登录 ──────────────────────────────────────
     print("== 第 4 步：自动尝试登录 ==")
-    modes = ["rsa", "none"] if info.rsa_key else ["none"]
+    # 尝试矩阵：接口候选 × 请求形态(form/json) × 加密模式（按可能性排序，逐个试到在线为止）
+    # 候选为相对路径（JS 扫描结果），统一基于表单页转为绝对 URL
+    endpoints = [urljoin(final_url, e) for e in (info.candidates or [info.endpoint])]
+    modes: list[str] = []
+    if info.aes_key:
+        modes.append("aes_ecb" if info.aes_mode == "ECB" else "aes_cbc")
+    if info.rsa_key:
+        modes.append("rsa")
+    modes.append("none")
     logged_in = False
     tried: list[str] = []
-    for mode in modes:
-        try:
-            code, final = _attempt_login(session, cfg, info, username, password,
-                                         mode, hops)
-        except requests.RequestException as exc:
-            tried.append(f"{mode}: 请求异常 {type(exc).__name__}")
-            continue
-        verify = probe(session, cfg)
-        tried.append(f"{mode}: code={'有' if code else '无'}，登录后状态={verify.status.value}")
-        if verify.status is ProbeStatus.ONLINE:
-            logged_in = True
-            # 成功页信息直接从最终响应解析，不再重复请求 ePortal
-            from .auth.eportal import CAPTURED as E_CAP
-            body = final.text[:8192]
-            ui = re.search(E_CAP.user_index_pattern, body)
-            ka = re.search(E_CAP.keepalive_pattern, body)
-            hops.append(f"成功（加密={mode}，userIndex={ui.group(1) if ui else '未发现'}，"
-                        f"keepalive={ka.group(1) + 's' if ka else '未发现'}）")
+    used_endpoint = used_mode = ""
+    code: str | None = None
+    final = None
+    for endpoint in endpoints:
+        for kind in ("form", "json"):
+            for mode in modes:
+                try:
+                    code, final = _attempt_login(session, cfg, info, endpoint, kind,
+                                                 username, password, mode, hops)
+                except requests.RequestException as exc:
+                    tried.append(f"{endpoint}[{kind}] {mode}: 请求异常 {type(exc).__name__}")
+                    continue
+                verify = probe(session, cfg)
+                tried.append(f"{endpoint}[{kind}] {mode}: "
+                             f"code={'有' if code else '无'}，登录后状态={verify.status.value}")
+                if verify.status is ProbeStatus.ONLINE:
+                    logged_in = True
+                    used_endpoint, used_mode = endpoint, mode
+                    # 成功页信息直接从最终响应解析，不再重复请求 ePortal
+                    from .auth.eportal import CAPTURED as E_CAP
+                    body = (final.text or "")[:8192]
+                    ui = re.search(E_CAP.user_index_pattern, body)
+                    ka = re.search(E_CAP.keepalive_pattern, body)
+                    hops.append(f"成功（接口={endpoint}，{kind}，加密={mode}，"
+                                f"userIndex={ui.group(1) if ui else '未发现'}，"
+                                f"keepalive={ka.group(1) + 's' if ka else '未发现'}）")
+                    break
+                # 记录失败响应片段供分析（不含密码——密码只在请求里，不在响应里）
+                hops.append(f"  失败响应片段：{re_sp(final.text)}")
+            if logged_in:
+                break
+        if logged_in:
             break
-        # 记录失败响应片段供分析（不含密码——密码只在请求里，不在响应里）
-        hops.append(f"  失败响应片段：{re_sp(final.text)}")
 
     sections = [("探测", pr_lines), ("跳转链", hops),
                 ("表单分析", _summarize_form(info)),
@@ -343,13 +450,16 @@ def run_capture(cfg: Config, paths: AppPaths) -> int:
     if logged_in:
         protocol = {
             "sso": {
-                "login_endpoint": _relative_if_possible(info.endpoint, info.page_url),
+                "login_endpoint": _relative_if_possible(used_endpoint, info.page_url),
                 "username_field": info.username_field,
                 "password_field": info.password_field,
                 "extra_fields": {k: v for k, v in info.inputs.items()
                                  if k not in (info.username_field, info.password_field)},
-                "password_encrypt": "rsa" if (mode == "rsa" and info.rsa_key) else "none",
+                "password_encrypt": used_mode,
                 "rsa_public_key": info.rsa_key or "",
+                "aes_key": info.aes_key or "",
+                "aes_iv": info.aes_iv or "",
+                "aes_padding": info.aes_padding,
                 "has_captcha": False,
             },
             "eportal": {"online_mode": "sso_pass" if code else "direct"},
@@ -360,7 +470,7 @@ def run_capture(cfg: Config, paths: AppPaths) -> int:
                                  encoding="utf-8")
         session_store.save(session, paths.session)
         sections[3] = ("结论", [
-            f"✅ 登录成功（加密={mode}）",
+            f"✅ 登录成功（接口={used_endpoint}，加密={used_mode}）",
             f"已写自配置：{protocol_path}",
             f"已保存 SSO 会话：{paths.session}（免密复用直至次日失效）",
             "下一步：oit-portal daemon 即可全自动保活",
