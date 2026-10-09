@@ -157,6 +157,45 @@ def test_direct_form_login_no_code(cfg, fake_session, monkeypatch):
     assert result.via == "password"
 
 
+def test_dynamic_aes_key_refresh(cfg, fake_session, monkeypatch):
+    """AES 密钥动态（实测每页一变）：登录时以当次登录页内联 key 加密，
+    protocol.json 里存的旧 key 不参与本次加密。"""
+    from oit_portal.auth.sso import _aes_encrypt
+    _captured_defaults(monkeypatch, login_endpoint="/auth/oauth/login")
+    monkeypatch.setattr(sso_mod.CAPTURED, "password_encrypt", "aes_cbc")
+    monkeypatch.setattr(sso_mod.CAPTURED, "aes_key", "0000000000000000")  # 过期旧 key
+    monkeypatch.setattr(sso_mod.CAPTURED, "aes_iv", "0000000000000000")
+
+    fresh_key = "aaaabbbbccccdddd"  # 当次登录页下发的新 key
+    vue_page = (
+        "<script>var k=CryptoJS.enc.Utf8.parse('" + fresh_key + "');"
+        "var e=CryptoJS.AES.encrypt(str,k,{mode:CryptoJS.mode.CBC,"
+        "padding:CryptoJS.pad.ZeroPadding});</script>"
+        "<div id='app'>Vue SPA 登录页（无 form）</div>"
+    )
+    states = iter([
+        ProbeResult(ProbeStatus.CAPTIVE, redirect_url=AUTHORIZE_URL),
+        ProbeResult(ProbeStatus.ONLINE),
+    ])
+    fake_session.add(lambda u, m: m == "GET" and u == AUTHORIZE_URL,
+                     FakeResponse(200, text=vue_page),
+                     FakeResponse(200, text=vue_page))
+    fake_session.add(lambda u, m: m == "POST" and u.endswith("/auth/oauth/login"),
+                     FakeResponse(302, headers={"Location": EPORTAL_CODE_URL}))
+    fake_session.add_url(EPORTAL_CODE_URL, FakeResponse(200, text=SUCCESS_PAGE))
+
+    flow = _flow(fake_session, cfg, lambda: next(states))
+    result = flow.ensure_online()
+    assert result.outcome is FlowOutcome.LOGGED_IN
+    assert result.via == "password"
+
+    # POST 的密码必须用「当次页面的新 key」加密，而不是存量旧 key
+    post_url, post_data = fake_session.posts[0]
+    assert post_url.endswith("/auth/oauth/login")
+    expected = _aes_encrypt("secret-pass", fresh_key, fresh_key, "aes_cbc", "zero")
+    assert post_data["password"] == expected
+
+
 def test_need_credentials_when_no_password(cfg, fake_session, monkeypatch):
     _captured_defaults(monkeypatch)
     cfg.password = None

@@ -81,3 +81,34 @@ def test_follow_entry_stops_on_form_no_follow(cfg, fake_session):
     assert entry.challenge is None
     assert entry.final_url == "http://p/"
     assert fake_session.calls == []  # 未发起任何请求
+
+
+def test_scan_login_endpoints_inline_scripts(fake_session, cfg):
+    """Vue SPA 的登录调用常在内联脚本里：无需外链 JS 也应扫出接口。"""
+    from oit_portal.capture import scan_login_endpoints
+    page = (
+        '<div id="app"></div><script>'
+        'doLogin(){ axios.post("/auth/oauth/login", {username: this.u, '
+        "password: this.$encrypt(this.p)}).then(r=>{location.href=r.data.redirect})}"
+        "</script>"
+    )
+    candidates, evidence = scan_login_endpoints(fake_session, cfg,
+                                                "http://sso.example/", page)
+    assert "/auth/oauth/login" in candidates
+    assert any("axios.post" in e for e in evidence)
+    # 页面自身路径作为末位候选
+    assert candidates[-1] == "/"
+
+
+def test_scan_login_endpoints_external_js(fake_session, cfg):
+    from oit_portal.capture import scan_login_endpoints
+    page = ('<script src="/static/framework/vue.min.js"></script>'
+            '<script src="/static/auth/login.js"></script>')
+    fake_session.add(lambda u, m: u.endswith("/static/auth/login.js"),
+                     FakeResponse(200, text='api.post("/api/v1/ssoLogin",{u:u,p:p});'))
+    fake_session.add(lambda u, m: u.endswith("vue.min.js"),
+                     FakeResponse(200, text="/* vue framework */"))
+    candidates, evidence = scan_login_endpoints(fake_session, cfg,
+                                                "http://sso.example/login", page)
+    assert "/api/v1/ssoLogin" in candidates
+    assert any("ssoLogin" in e for e in evidence)

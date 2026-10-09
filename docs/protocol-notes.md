@@ -23,7 +23,7 @@
 | C2.3 | 密码字段名 | 待确认 | 同上，预设 `password` |
 | C2.4 | 隐藏字段清单 | 待确认 | `<CAPTURE:B-2>` |
 | C2.5 | 验证码 | ✅ 已确认：**不存在**（2026-10-09 用户观察） | 账密自动登录路径无阻碍 |
-| C2.6 | 密码前端加密方式 | ✅ 已确认（2026-10-09 登录页源码） | **AES-128-CBC**：`key = iv = '563a38b893f98998'`（页面内联 `'563a38b893f98998d4917875837ee800'.substr(0,16)`），ZeroPadding，输出 base64（CryptoJS `$encrypt`）。pycryptodome 复现已实现并有往返测试 |
+| C2.6 | 密码前端加密方式 | ✅ 已确认（2026-10-09 两次抓包对比） | **AES-128-CBC，ZeroPadding，base64**；⚠️ **key=iv 每次页面加载动态变化**（两次实测：`563a38***` → `4826c9***`）。运行时由 `sso.login_password` 从当次登录页内联脚本重新提取（`htmlutil.find_aes`），protocol.json 存量 key 仅兜底 |
 | C2.7 | 登录失败响应格式 | 待确认 | `<CAPTURE:C-1>` |
 
 ## C3 code 换上线

@@ -27,7 +27,7 @@ import requests
 from . import htmlutil
 from .auth import session_store
 from .auth.eportal import EportalAdapter
-from .auth.models import AuthCode, PortalChallenge
+from .auth.models import AuthCode, PortalChallenge, ProtocolMismatch
 from .auth.sso import _rsa_encrypt
 from .config import Config
 from .discover import cookie_names, follow_entry
@@ -64,6 +64,15 @@ class FormInfo:
     aes_mode: str = "CBC"
     aes_source: str = ""
     candidates: list[str] = field(default_factory=list)  # JS 扫描出的登录接口候选
+    evidence: list[str] = field(default_factory=list)    # 候选的来源上下文（排障用）
+
+
+def _crypto_available() -> bool:
+    try:
+        import Crypto  # noqa: F401
+        return True
+    except ImportError:
+        return False
 
 
 def _make_session(cfg: Config) -> requests.Session:
@@ -174,8 +183,26 @@ _STATIC_EXT = (".css", ".js", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico",
 
 
 def scan_login_endpoints(session: requests.Session, cfg: Config, page_url: str,
-                         html: str) -> list[str]:
-    """无 <form> 的 SPA 登录页：扫描同源脚本，收集登录接口路径候选。"""
+                         html: str) -> tuple[list[str], list[str]]:
+    """无 <form> 的 SPA 登录页：收集登录接口路径候选。
+
+    先扫页面内联脚本（Vue 应用的登录调用常写在内联 <script> 里），
+    再扫外链 JS（auth/login 相关文件优先，框架库靠后）。
+    返回 (候选列表, 证据上下文列表)。
+    """
+    candidates: list[str] = []
+    evidence: list[str] = []
+
+    def harvest(text: str, source: str) -> None:
+        for m in _LOGIN_EP_RE.finditer(text[:_MAX_JS_BYTES]):
+            path = m.group(1).split("?")[0]
+            if path.lower().endswith(_STATIC_EXT) or path in candidates:
+                continue
+            candidates.append(path)
+            ctx = text[max(0, m.start() - 100):m.end() + 100]
+            evidence.append(f"{source}: …{re_sp(ctx)}…")
+
+    harvest(html, "页面内联")
     srcs = dict.fromkeys(htmlutil.script_sources(html))
 
     def priority(src: str) -> int:
@@ -186,7 +213,6 @@ def scan_login_endpoints(session: requests.Session, cfg: Config, page_url: str,
             return 2   # 框架库放最后甚至跳过
         return 1
 
-    found: list[str] = []
     for src in sorted(srcs, key=priority)[:12]:
         js_url = urljoin(page_url, src)
         if urlsplit(js_url).netloc != urlsplit(page_url).netloc:
@@ -195,17 +221,12 @@ def scan_login_endpoints(session: requests.Session, cfg: Config, page_url: str,
             js = session.get(js_url, timeout=cfg.advanced.timeout_sec).text
         except requests.RequestException:
             continue
-        for m in _LOGIN_EP_RE.finditer(js[:_MAX_JS_BYTES]):
-            path = m.group(1).split("?")[0]
-            if path.lower().endswith(_STATIC_EXT):
-                continue
-            if path not in found:
-                found.append(path)
+        harvest(js, f"外链 {src}")
     # 页面自身路径作为末位候选（部分 SPA 提交回当前地址）
     own = urlsplit(page_url).path
-    if own and own not in found:
-        found.append(own)
-    return found
+    if own and own not in candidates:
+        candidates.append(own)
+    return candidates, evidence
 
 
 def _transform_password(password: str, mode: str, info: FormInfo) -> str:
@@ -357,9 +378,10 @@ def run_capture(cfg: Config, paths: AppPaths) -> int:
     hops.append(f"表单页 {final_url} [Set-Cookie: {cookie_names(resp)}]")
 
     if not info.endpoint:
-        # Vue/SPA 页面无 <form>：扫描页面脚本寻找登录接口候选
+        # Vue/SPA 页面无 <form>：扫描内联脚本与外链 JS 寻找登录接口候选
         print("  页面无 <form>（Vue/JS 动态渲染），扫描脚本寻找登录接口……")
-        info.candidates = scan_login_endpoints(session, cfg, final_url, resp.text)
+        info.candidates, info.evidence = scan_login_endpoints(session, cfg,
+                                                              final_url, resp.text)
         for line in _summarize_form(info):
             print(f"  {line}")
         hops.append(f"JS 扫描接口候选：{info.candidates or '无'}")
@@ -386,6 +408,14 @@ def run_capture(cfg: Config, paths: AppPaths) -> int:
         return 1
 
     # ── 3. 交互输入凭据 ──────────────────────────────────────
+    # 前置检查：检测到前端加密但缺少加密库时，明确提示而不是中途崩溃
+    if (info.aes_key or info.rsa_key) and not _crypto_available():
+        print("⚠️ 检测到密码前端加密，但当前 Python 环境缺少 pycryptodome，无法加密密码。")
+        print("   请先执行：pip install pycryptodome")
+        print("   然后重新运行本向导。")
+        _write_report(report, "缺少 pycryptodome",
+                      [("探测", pr_lines), ("表单分析", _summarize_form(info))])
+        return 1
     print("== 第 3 步：输入凭据（密码输入不回显；不会写入任何报告）==")
     default_user = cfg.username
     prompt = f"账号[{default_user}]：" if default_user else "账号："
@@ -422,6 +452,9 @@ def run_capture(cfg: Config, paths: AppPaths) -> int:
                 except requests.RequestException as exc:
                     tried.append(f"{endpoint}[{kind}] {mode}: 请求异常 {type(exc).__name__}")
                     continue
+                except ProtocolMismatch as exc:
+                    tried.append(f"{endpoint}[{kind}] {mode}: {exc}")
+                    continue
                 verify = probe(session, cfg)
                 tried.append(f"{endpoint}[{kind}] {mode}: "
                              f"code={'有' if code else '无'}，登录后状态={verify.status.value}")
@@ -446,6 +479,7 @@ def run_capture(cfg: Config, paths: AppPaths) -> int:
 
     sections = [("探测", pr_lines), ("跳转链", hops),
                 ("表单分析", _summarize_form(info)),
+                ("JS 证据", info.evidence or ["（无）"]),
                 ("尝试记录", tried), ("结论", [])]
     if logged_in:
         protocol = {

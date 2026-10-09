@@ -30,6 +30,7 @@ class FakeSession:
         self.headers: dict[str, str] = {}
         self.routes: list[tuple[Callable, deque]] = []
         self.calls: list[tuple[str, str]] = []
+        self.posts: list[tuple[str, object]] = []   # (url, data 或 json 载荷)
 
     def add(self, predicate, *responses):
         self.routes.append((predicate, deque(responses)))
@@ -39,6 +40,8 @@ class FakeSession:
 
     def _dispatch(self, method: str, url: str, data=None, **kwargs):
         self.calls.append((method, url))
+        if method == "POST":
+            self.posts.append((url, data if data is not None else kwargs.get("json")))
         for predicate, queue in self.routes:
             if predicate(url, method):
                 if len(queue) > 1:

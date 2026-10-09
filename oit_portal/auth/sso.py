@@ -113,8 +113,11 @@ class SsoAdapter:
             return True
         return "<form" in head.lower()
 
-    def _transform_password(self, raw: str) -> str:
+    def _transform_password(self, raw: str, aes_fresh: dict | None = None) -> str:
+        """密码前端加密。aes_fresh 为当次登录页提取的 AES 参数（密钥动态，页面即真相）。"""
         mode = CAPTURED.password_encrypt
+        if aes_fresh:  # 当次登录页发现 AES：无论存量配置写什么，以页面为准
+            mode = "aes_ecb" if aes_fresh.get("mode") == "ECB" else "aes_cbc"
         if mode == "none":
             return raw
         if mode == "rsa":
@@ -122,27 +125,33 @@ class SsoAdapter:
                 raise ProtocolMismatch("rsa_public_key 尚未填充（protocol-notes C2.6）")
             return _rsa_encrypt(raw, CAPTURED.rsa_public_key)
         if mode in ("aes_cbc", "aes_ecb"):
-            if _is_captured(CAPTURED.aes_key):
-                raise ProtocolMismatch("aes_key 尚未填充（protocol-notes C2.6）")
-            return _aes_encrypt(raw, CAPTURED.aes_key, CAPTURED.aes_iv, mode,
-                                CAPTURED.aes_padding)
+            if aes_fresh:
+                key, iv = aes_fresh["key"], aes_fresh["iv"]
+                padding = aes_fresh.get("padding", "zero")
+            else:
+                if _is_captured(CAPTURED.aes_key):
+                    raise ProtocolMismatch("aes_key 尚未填充（protocol-notes C2.6）")
+                key, iv, padding = CAPTURED.aes_key, CAPTURED.aes_iv, CAPTURED.aes_padding
+            return _aes_encrypt(raw, key, iv, mode, padding)
         raise ProtocolMismatch(f"未知加密方式 {mode}")
 
     # ── 策略 A：会话复用 ─────────────────────────────────────
 
     def try_session(self, challenge: PortalChallenge) -> AuthCode | None:
-        """SSO cookie 有效则免密拿 code；需要表单则返回 None。"""
+        """SSO cookie 有效则免密拿 code；否则返回 None（转账密登录）。
+
+        Vue/SPA 登录页无 <form>、可能也无 password 标记，
+        因此任何非 code 的最终响应都按「需要登录」处理，不再视为协议异常。
+        """
         resp, code_location = self._follow(challenge.authorize_url)
         if code_location:
             code = self._extract_code(code_location)
             logger.info("SSO 会话复用成功，免密获得 code")
             return AuthCode(code=code, obtained_via="session_reuse")
-        if self._looks_like_form(resp):
-            logger.info("SSO 会话无效或不存在，需要账密登录")
-            return None
-        raise ProtocolMismatch(
-            f"authorize 响应异常：HTTP {resp.status_code}，既非 code 跳转也非登录表单"
-        )
+        logger.info("SSO 会话无效或不存在（%s），转账密登录",
+                    "登录表单页" if self._looks_like_form(resp)
+                    else f"HTTP {resp.status_code} 页面")
+        return None
 
     # ── 策略 B：账密登录 ─────────────────────────────────────
 
@@ -161,6 +170,9 @@ class SsoAdapter:
         if code_location:  # 万一表单页阶段就免密通过了
             return AuthCode(code=self._extract_code(code_location),
                             obtained_via="session_reuse")
+        # AES 密钥动态刷新（实测每次页面加载 key 都变：563a38***→4826c9***），
+        # 以当次登录页内联脚本为准，存量 protocol.json 里的 key 仅作无页面时兜底
+        aes_fresh = htmlutil.find_aes(resp.text)
 
         # 2) POST 账密（端点为相对路径时基于表单页 URL 解析）
         endpoint = CAPTURED.login_endpoint
@@ -172,7 +184,8 @@ class SsoAdapter:
             extra.update(htmlutil.hidden_values(resp.text, list(extra)))
         form = {
             CAPTURED.username_field: username,
-            CAPTURED.password_field: self._transform_password(password),
+            CAPTURED.password_field: self._transform_password(password,
+                                                              aes_fresh=aes_fresh),
             **extra,
         }
         logger.info("提交 SSO 账密登录（密码加密=%s）", CAPTURED.password_encrypt)
