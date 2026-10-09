@@ -33,7 +33,8 @@ fi
 
 echo "==> [4/6] 写入凭据（密码只存本机，权限 600）"
 read -rsp "请输入校园网密码（输入不回显）: " PASSWORD; echo
-umask 177   # 之后创建的文件仅本用户可读写
+# 用 chmod 直接收紧权限（不用 umask 177，避免 umask 污染到
+# 后续 oit-portal 子进程导致日志目录创建失败）
 printf 'password = "%s"\n' "$PASSWORD" > "$CFG_DIR/credentials.toml"
 chmod 600 "$CFG_DIR/credentials.toml"
 unset PASSWORD
@@ -47,6 +48,9 @@ fi
 sed "s|@PREFIX@|${PREFIX}|g" "$(dirname "$0")/boot_start.sh.template" \
   > "${HOME}/.termux/boot/oit-portal"
 chmod +x "${HOME}/.termux/boot/oit-portal"
+
+# 预创建日志目录（避免 oit-portal 启动时遇到权限问题）
+mkdir -p "$CFG_DIR/logs"
 
 # ── 4. 立即试跑一次 ─────────────────────────────────────────
 echo "==> [6/6] 试跑登录（当前 WiFi 为校园网时才会真正登录）"
