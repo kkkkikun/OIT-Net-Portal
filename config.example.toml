@@ -1,0 +1,35 @@
+# OIT 校园网自动登录配置模板
+# 复制到对应位置后修改（Windows: %APPDATA%\oit-portal\config.toml；Termux: ~/.config/oit-portal/config.toml）
+# 账号写这里；密码不写在这里，放同目录 credentials.toml（chmod 600）或环境变量 OIT_PORTAL_PASSWORD
+
+[account]
+username = "2023xxxxxx"          # 学号/工号；也可用环境变量 OIT_PORTAL_USERNAME
+
+[probe]
+urls = [
+    "http://connect.rom.miui.com/generate_204",
+    "http://captive.apple.com/hotspot-detect.html",
+    "http://www.qualcomm.cn/generate_204",
+]
+online_interval_sec = 60         # 稳定在线时的巡检间隔
+post_online_interval_sec = 15    # 刚上线 5 分钟内的密集复查间隔
+post_online_window_sec = 300
+offline_interval_sec = 30        # 无网络时仅探测的间隔
+jitter_ratio = 0.2               # 间隔 ±20% 随机抖动
+
+[retry]
+max_attempts = 5                 # 连续失败告警阈值
+backoff_base_sec = 5             # 指数退避基数：5→10→20→40→80
+backoff_cap_sec = 300
+deep_backoff_sec = 600           # 告警后的深度退避
+min_relogin_interval_sec = 300   # 两次账密登录最小间隔（防风暴）
+
+[keepalive]
+traffic_keepalive = false        # 抓包确认存在空闲超时（protocol-notes C4.3）后再开
+keepalive_url = ""               # <CAPTURE:C-4> 心跳 URL
+keepalive_interval_sec = 180
+
+[advanced]
+user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+timeout_sec = 8
+eportal_host = "172.16.11.54"    # 锐捷 ePortal 服务器

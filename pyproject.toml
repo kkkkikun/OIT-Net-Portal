@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "oit-portal"
+version = "0.1.0"
+description = "鄂尔多斯应用技术学院校园网静默自动登录与保活（Windows / Android Termux）"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+dependencies = [
+    "requests>=2.28",
+    'tomli>=2.0; python_version < "3.11"',
+]
+
+[project.optional-dependencies]
+rsa = ["pycryptodome>=3.18"]   # 仅当抓包确认密码前端 RSA 加密时需要
+dev = ["pytest>=7"]
+
+[project.scripts]
+oit-portal = "oit_portal.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["oit_portal*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

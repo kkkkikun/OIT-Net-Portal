@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+
+# 敏感文件永不入库
+config.toml
+credentials.toml
+session.json
+*.log
+*.har
+tests/fixtures/*.har

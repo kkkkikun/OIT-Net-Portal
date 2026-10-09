@@ -1,0 +1,5 @@
+#!/@PREFIX@/bin/bash
+# Termux:Boot 开机脚本：持锁并后台拉起 daemon（勿直接编辑本文件，安装脚本会生成副本）
+termux-wake-lock 2>/dev/null || true
+pgrep -f "oit-portal daemon" >/dev/null 2>&1 || \
+  nohup oit-portal daemon >/dev/null 2>&1 &
