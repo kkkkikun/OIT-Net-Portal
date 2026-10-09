@@ -1,7 +1,10 @@
 # 协议确认记录（protocol-notes）
 
 > 抓包结论逐条填入本表。状态：`待确认` → `已确认` / `确认不存在`。
-> 每关闭一项，同步修改 `oit_portal/auth/sso.py` / `eportal.py` 顶部 `CAPTURED` 常量块。
+>
+> **获取方式**：校内未登录状态运行 `oit-portal capture` 向导，成功后自动写入
+> `<配置目录>/protocol.json` 覆盖 `CAPTURED` 占位值（无需手改代码）；
+> 向导报告 `capture-report.txt` 中的结论同步登记到下表。
 
 ## C1 触发链
 

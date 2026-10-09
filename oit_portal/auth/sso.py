@@ -19,8 +19,10 @@ from urllib.parse import parse_qs, urlsplit
 
 import requests
 
+from .. import htmlutil
 from ..config import Config
 from ..log import get_logger
+from ..protocol_overrides import apply_overrides
 from .models import (AuthCode, AuthError, CaptchaRequired, LoginRejected,
                      PortalChallenge, PortalUnreachable, ProtocolMismatch)
 
@@ -57,6 +59,7 @@ class SsoAdapter:
         self.session = session
         self.cfg = cfg
         self.base = f"http://{cfg.advanced.eportal_host}"  # 仅占位，真正 base 来自 challenge
+        apply_overrides(CAPTURED, "sso")  # capture 向导自动发现的协议覆盖
 
     # ── 内部工具 ──────────────────────────────────────────────
 
@@ -154,10 +157,14 @@ class SsoAdapter:
         endpoint = CAPTURED.login_endpoint
         if not urlsplit(endpoint).netloc:
             endpoint = self._absolutize(resp.url or challenge.authorize_url, endpoint)
+        # 隐藏字段动态刷新：CAS lt/execution 等每会话不同的 token 以当次表单页为准
+        extra = dict(CAPTURED.extra_fields)
+        if extra:
+            extra.update(htmlutil.hidden_values(resp.text, list(extra)))
         form = {
             CAPTURED.username_field: username,
             CAPTURED.password_field: self._transform_password(password),
-            **dict(CAPTURED.extra_fields),
+            **extra,
         }
         logger.info("提交 SSO 账密登录（密码加密=%s）", CAPTURED.password_encrypt)
         try:
@@ -166,24 +173,25 @@ class SsoAdapter:
         except requests.RequestException as exc:
             raise PortalUnreachable(f"登录请求失败: {type(exc).__name__}") from exc
 
-        # 3) 结果判定：302 链出 code = 成功；200 + 拒绝特征 = 账密错误
+        # 3) 结果判定：302 链出 code = OAuth 模式成功；
+        #    无 code 则按「表单直登」处理（部分学校 POST 即上线，交由 flow 复测确认）
+        final = post
+        code_location = None
         if post.status_code in _REDIRECT_CODES:
             location = post.headers.get("Location", "")
             if not location:
                 raise ProtocolMismatch("登录响应 30x 但无 Location")
-            _, code_location = self._follow(self._absolutize(endpoint, location))
-            if code_location:
-                logger.info("账密登录成功，获得 code")
-                return AuthCode(code=self._extract_code(code_location),
-                                obtained_via="password")
-            raise ProtocolMismatch("登录后跳转链中未发现 code 参数")
-        body = post.text[:4096]
+            final, code_location = self._follow(self._absolutize(endpoint, location))
+        body = final.text[:4096]
         for marker in CAPTURED.reject_markers:
             if marker in body:
                 raise LoginRejected(f"SSO 拒绝登录（命中标记「{marker}」）")
-        raise ProtocolMismatch(
-            f"登录响应异常：HTTP {post.status_code}，无拒绝标记也无 code 跳转"
-        )
+        if code_location:
+            logger.info("账密登录成功，获得 code")
+            return AuthCode(code=self._extract_code(code_location),
+                            obtained_via="password")
+        logger.info("登录链未出现 code，按表单直登模式交由复测确认")
+        return AuthCode(code="", obtained_via="password")
 
 
 def _rsa_encrypt(raw: str, public_key: str) -> str:

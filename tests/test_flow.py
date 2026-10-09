@@ -139,6 +139,24 @@ def test_eportal_success_but_verify_fails(cfg, fake_session, monkeypatch):
     assert result.outcome is FlowOutcome.FAILED
 
 
+def test_direct_form_login_no_code(cfg, fake_session, monkeypatch):
+    """「表单直登」学校：POST 登录无 code 跳转，直接 200 成功页 → 复测在线。"""
+    _captured_defaults(monkeypatch, login_endpoint="/auth/user/login")
+    states = iter([
+        ProbeResult(ProbeStatus.CAPTIVE, redirect_url=AUTHORIZE_URL),
+        ProbeResult(ProbeStatus.ONLINE),
+    ])
+    fake_session.add(lambda u, m: m == "GET" and u == AUTHORIZE_URL,
+                     FakeResponse(200, text="<form><input name=password>"),
+                     FakeResponse(200, text="<form><input name=password>"))
+    fake_session.add(lambda u, m: m == "POST" and u.endswith("/auth/user/login"),
+                     FakeResponse(200, text="认证成功 userIndex='ff00'"))
+    flow = _flow(fake_session, cfg, lambda: next(states))
+    result = flow.ensure_online()
+    assert result.outcome is FlowOutcome.LOGGED_IN
+    assert result.via == "password"
+
+
 def test_need_credentials_when_no_password(cfg, fake_session, monkeypatch):
     _captured_defaults(monkeypatch)
     cfg.password = None

@@ -45,6 +45,7 @@ def _build_parser() -> argparse.ArgumentParser:
     sub.add_parser("daemon", help="常驻守护：自动登录 + 保活循环")
     sub.add_parser("stop", help="停止运行中的 daemon")
     sub.add_parser("login-info", help="打印人工登录引导（触发 URL 等）")
+    sub.add_parser("capture", help="一键抓包向导：自动发现登录协议并自配置（校内未登录状态运行）")
     return parser
 
 
@@ -56,6 +57,7 @@ def _load(paths: AppPaths, args: argparse.Namespace) -> Config:
 def _make_session(cfg: Config) -> requests.Session:
     session = requests.Session()
     session.headers["User-Agent"] = cfg.advanced.user_agent
+    session.trust_env = False  # 探测/认证直连，不走系统代理
     return session
 
 
@@ -75,6 +77,11 @@ def cmd_once(cfg: Config, paths: AppPaths) -> int:
     return _OUTCOME_EXIT[result.outcome]
 
 
+def cmd_capture(cfg: Config, paths: AppPaths) -> int:
+    from .capture import run_capture
+    return run_capture(cfg, paths)
+
+
 def cmd_login_info(cfg: Config, paths: AppPaths) -> int:
     """验证码/会话失效时的人工兜底引导。"""
     print("== 人工登录引导 ==")
@@ -92,6 +99,7 @@ COMMANDS = {
     "daemon": lambda cfg, paths: run_daemon(cfg, paths),
     "stop": lambda cfg, paths: stop_daemon(paths),
     "login-info": cmd_login_info,
+    "capture": cmd_capture,
 }
 
 

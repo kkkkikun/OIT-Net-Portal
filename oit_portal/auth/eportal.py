@@ -17,6 +17,7 @@ import requests
 
 from ..config import Config
 from ..log import get_logger
+from ..protocol_overrides import apply_overrides
 from .models import (AuthCode, OnlineResult, PortalChallenge,
                      PortalUnreachable, ProtocolMismatch)
 
@@ -50,8 +51,12 @@ class EportalAdapter:
     def __init__(self, session: requests.Session, cfg: Config):
         self.session = session
         self.cfg = cfg
+        apply_overrides(CAPTURED, "eportal")  # capture 向导自动发现的协议覆盖
 
     def online(self, code: AuthCode, challenge: PortalChallenge) -> OnlineResult:
+        if not code.code:  # 表单直登模式：登录 POST 已直接上线，无需再调 ePortal
+            return OnlineResult(success=True, mode="direct",
+                                message="表单直登，跳过 ePortal 调用")
         if CAPTURED.online_mode == "sso_pass":
             return self._online_sso_pass(code, challenge)
         return self._online_interface_do(code, challenge)

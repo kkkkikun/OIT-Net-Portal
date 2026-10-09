@@ -1,0 +1,378 @@
+"""一键协议抓取向导：`oit-portal capture`。
+
+在校内（校园 WiFi 未登录状态）运行，交互输一次账密，自动完成：
+  1. 探测触发，拿到 302 跳转链与登录挑战
+  2. 解析登录表单：端点、字段名、验证码检测、RSA 加密检测（含外链 JS 扫描）
+  3. 按发现结果自动尝试登录（明文 / RSA），跟随 code 回跳完成 ePortal 上线
+  4. 成功 → 写 protocol.json 自配置 + 持久化 SSO 会话（之后 daemon 全程免密）
+  5. 无论成败 → 生成脱敏报告 capture-report.txt（不含密码，cookie 只留 4 位）
+
+失败时把报告发给维护者即可替代全部手动 F12 抓包工作。
+"""
+
+from __future__ import annotations
+
+import getpass
+import json
+import re
+import sys
+from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
+from urllib.parse import parse_qs, urljoin, urlsplit
+
+import requests
+
+from . import htmlutil
+from .auth import session_store
+from .auth.eportal import EportalAdapter
+from .auth.models import AuthCode, PortalChallenge
+from .auth.sso import _rsa_encrypt
+from .config import Config
+from .log import get_logger
+from .paths import AppPaths
+from .probe import ProbeStatus, probe
+
+logger = get_logger()
+
+_MAX_HOPS = 10
+_MAX_JS_FILES = 6
+_MAX_JS_BYTES = 300_000
+_USERNAME_HINT_RE = ("user", "account", "username", "xh", "stu", "login")
+
+
+@dataclass
+class FormInfo:
+    page_url: str = ""
+    endpoint: str = ""                 # 绝对 URL
+    inputs: dict[str, str] = field(default_factory=dict)     # name -> value（隐藏字段预填值）
+    visible: list[str] = field(default_factory=list)
+    username_field: str | None = None
+    password_field: str | None = None
+    has_captcha: bool = False
+    captcha_reason: str = ""
+    rsa_key: str | None = None
+    rsa_source: str = ""
+    rsa_hint_only: bool = False        # 有加密迹象但未提取到公钥
+
+
+def _make_session(cfg: Config) -> requests.Session:
+    session = requests.Session()
+    session.headers["User-Agent"] = cfg.advanced.user_agent
+    # 探测与认证必须直连：系统代理会劫持 captive 检测与登录跳转链
+    session.trust_env = False
+    return session
+
+
+def _cookie_names(resp: requests.Response) -> str:
+    raw = resp.headers.get("Set-Cookie", "")
+    names = [part.split("=", 1)[0].strip() for part in raw.split(",") if "=" in part]
+    return ",".join(n for n in names if n) or "-"
+
+
+def _walk(session: requests.Session, url: str, cfg: Config,
+          hops: list[str]) -> tuple[requests.Response, str]:
+    """手动跟随 30x 并记录每一跳，直到 200 / 出现 code / 跳数耗尽。"""
+    resp = None
+    for _ in range(_MAX_HOPS):
+        try:
+            resp = session.get(url, allow_redirects=False, timeout=cfg.advanced.timeout_sec)
+        except requests.RequestException as exc:
+            hops.append(f"GET {url} -> 异常 {type(exc).__name__}")
+            raise
+        hops.append(f"GET {url} -> {resp.status_code}"
+                    + (f" (Location: {resp.headers.get('Location', '')[:160]})"
+                       if 300 <= resp.status_code < 400 else "")
+                    + f" [Set-Cookie: {_cookie_names(resp)}]")
+        if 300 <= resp.status_code < 400:
+            location = resp.headers.get("Location", "")
+            if not location:
+                break
+            url = urljoin(url, location)
+            continue
+        break
+    return resp, url
+
+
+def _code_in(url: str) -> str | None:
+    qs = parse_qs(urlsplit(url).query)
+    if qs.get("code") and qs["code"][0]:
+        return qs["code"][0]
+    return None
+
+
+def analyze_form(session: requests.Session, cfg: Config, page_url: str,
+                 html: str) -> FormInfo:
+    info = FormInfo(page_url=page_url)
+    action = htmlutil.form_action(html)
+    if action is None or action == "":
+        return info
+    info.endpoint = urljoin(page_url, action)
+
+    for name, value, itype in htmlutil.inputs(html):
+        info.inputs[name] = value
+        if itype not in ("hidden", "submit", "button", "checkbox", "radio"):
+            info.visible.append(name)
+        if itype == "password" and info.password_field is None:
+            info.password_field = name
+
+    captcha_names = {n for n, _v, t in htmlutil.inputs(html)
+                     if t not in ("hidden", "submit", "button")
+                     and htmlutil.CAPTCHA_NAME_RE.search(n)}
+    info.has_captcha, img_reason = htmlutil.looks_like_captcha(html)
+    info.captcha_reason = info.captcha_reason or img_reason
+
+    # 用户名字段：名字含常见提示词的非密码可见输入，排除验证码
+    candidates = [n for n in info.visible
+                  if n != info.password_field and n not in captcha_names]
+    info.username_field = next(
+        (n for n in candidates
+         if any(h in n.lower() for h in _USERNAME_HINT_RE)),
+        candidates[0] if candidates else None,
+    )
+
+    # RSA 检测：先扫页面自身，再扫同源外链 JS
+    key, source = htmlutil.find_rsa_key(html)
+    if key:
+        info.rsa_key, info.rsa_source = key, f"页面内联（{source}）"
+    else:
+        hint = htmlutil.has_rsa_hint(html)
+        for src in htmlutil.script_sources(html)[:_MAX_JS_FILES]:
+            js_url = urljoin(page_url, src)
+            if urlsplit(js_url).netloc != urlsplit(page_url).netloc:
+                continue
+            try:
+                js = session.get(js_url, timeout=cfg.advanced.timeout_sec).text
+            except requests.RequestException:
+                continue
+            key, source = htmlutil.find_rsa_key(js[:_MAX_JS_BYTES])
+            if key:
+                info.rsa_key, info.rsa_source = key, f"外链 JS {src}（{source}）"
+                break
+            hint = hint or htmlutil.has_rsa_hint(js[:_MAX_JS_BYTES])
+        info.rsa_hint_only = hint and info.rsa_key is None
+    return info
+
+
+def _transform_password(password: str, mode: str, rsa_key: str | None) -> str:
+    if mode == "rsa":
+        return _rsa_encrypt(password, rsa_key or "")
+    return password
+
+
+def _attempt_login(session: requests.Session, cfg: Config, info: FormInfo,
+                   username: str, password: str, mode: str,
+                   hops: list[str]) -> tuple[str | None, requests.Response]:
+    payload = {k: v for k, v in info.inputs.items()
+               if k not in (info.username_field, info.password_field)}
+    payload[info.username_field] = username
+    payload[info.password_field] = _transform_password(password, mode, info.rsa_key)
+    hops.append(f"POST {info.endpoint} 字段[{','.join(payload)}] 加密={mode}")
+    post = session.post(info.endpoint, data=payload, allow_redirects=False,
+                        timeout=cfg.advanced.timeout_sec)
+    hops.append(f"  -> {post.status_code}"
+                + (f" (Location: {post.headers.get('Location', '')[:160]})"
+                   if 300 <= post.status_code < 400 else ""))
+    if 300 <= post.status_code < 400 and post.headers.get("Location"):
+        final, final_url = _walk(session, urljoin(info.endpoint,
+                                                  post.headers["Location"]), cfg, hops)
+        return _code_in(final_url), final
+    return None, post
+
+
+def _write_report(path: Path, title: str, sections: list[tuple[str, list[str]]]) -> None:
+    lines = [f"# OIT-Portal 抓包报告：{title}", f"生成时间：{datetime.now():%Y-%m-%d %H:%M:%S}", ""]
+    for header, items in sections:
+        lines.append(f"## {header}")
+        lines.extend(items or ["（空）"])
+        lines.append("")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines), encoding="utf-8")
+    print(f"报告已写入：{path}")
+
+
+def _summarize_form(info: FormInfo) -> list[str]:
+    if info.rsa_key:
+        rsa_desc = f"公钥来源={info.rsa_source}"
+    elif info.rsa_hint_only:
+        rsa_desc = "仅发现加密迹象，未提取到公钥"
+    else:
+        rsa_desc = "未发现"
+    return [
+        f"表单页：{info.page_url}",
+        f"提交端点：{info.endpoint}",
+        f"全部字段：{','.join(info.inputs)}",
+        f"用户名字段：{info.username_field}（可见字段：{','.join(info.visible)}）",
+        f"密码字段：{info.password_field}",
+        f"验证码：{'有（' + info.captcha_reason + '）' if info.has_captcha else '未发现'}",
+        f"RSA：{rsa_desc}",
+    ]
+
+
+def run_capture(cfg: Config, paths: AppPaths) -> int:
+    if not sys.stdin.isatty():
+        print("capture 向导需要交互式终端（要输入账号密码）", file=sys.stderr)
+        return 1
+
+    session = _make_session(cfg)
+    report = paths.home / "capture-report.txt"
+    hops: list[str] = []
+
+    # ── 1. 前置状态检查 ──────────────────────────────────────
+    print("== 第 1 步：探测网络状态 ==")
+    pr = probe(session, cfg)
+    print(f"当前状态：{pr}")
+    if pr.status is ProbeStatus.ONLINE:
+        print("已在线。请先让设备回到未登录状态：在认证成功页点「注销」，"
+              "或断开重连校园 WiFi，然后重新运行本向导。")
+        return 2
+    if pr.status is ProbeStatus.OFFLINE:
+        print("未检测到网络。请先连接校园 WiFi 再运行。")
+        return 2
+
+    try:
+        challenge = PortalChallenge.from_redirect(pr.redirect_url)
+    except Exception as exc:  # noqa: BLE001
+        _write_report(report, "302 解析失败", [("跳转链", hops),
+                                              ("错误", [str(exc)])])
+        print(f"302 Location 解析失败：{exc}\n请把 {report} 发给维护者。")
+        return 1
+    hops.append(f"探测点 {pr.probe_url} -> 302 (Location: {pr.redirect_url[:200]})")
+
+    # ── 2. 跳转链 + 表单分析 ─────────────────────────────────
+    print("== 第 2 步：跟随跳转链，分析登录表单 ==")
+    try:
+        resp, final_url = _walk(session, challenge.authorize_url, cfg, hops)
+    except requests.RequestException as exc:
+        _write_report(report, "跳转链中断", [("跳转链", hops)])
+        print(f"跳转链请求失败：{exc}")
+        return 1
+
+    if _code_in(final_url):
+        # 会话仍有效，authorize 直接发了 code——无需账密即可验证整条链路
+        # （_walk 跟随时已 GET 过 login_sso.jsp?code=... 完成上线，无需重复请求）
+        print("检测到 SSO 会话仍有效（跳转链直接发出 code），正在验证……")
+        code = _code_in(final_url)
+        verify = probe(session, cfg)
+        sections = [("跳转链", hops),
+                    ("结论", [f"code={code[:6]}***",
+                              f"最终页面片段：{re_sp(resp.text)}",
+                              f"复测：{verify}"])]
+        _write_report(report, "会话有效（免密路径可用）", sections)
+        session_store.save(session, paths.session)
+        if verify.status is ProbeStatus.ONLINE:
+            print("✅ 会话免密路径验证成功，会话已保存。直接运行 daemon 即可。")
+            return 0
+        print("⚠️ code 已获取但复测未在线，请把报告发给维护者。")
+        return 1
+
+    info = analyze_form(session, cfg, final_url, resp.text)
+    for line in _summarize_form(info):
+        print(f"  {line}")
+    hops.append(f"表单页 {final_url} [Set-Cookie: {_cookie_names(resp)}]")
+
+    if not info.endpoint:
+        _write_report(report, "未找到登录表单", [
+            ("跳转链", hops),
+            ("最终页面片段", [resp.text[:3000].replace("\n", " ")]),
+        ])
+        print(f"未解析出登录表单（可能是 JS 动态渲染）。请把 {report} 发给维护者。")
+        return 1
+    if info.has_captcha:
+        _write_report(report, "发现验证码", [("跳转链", hops),
+                                             ("表单分析", _summarize_form(info))])
+        print("登录页有验证码，无法全自动处理。请把报告发给维护者走人工适配。")
+        return 1
+    if info.rsa_hint_only:
+        _write_report(report, "RSA 痕迹但无公钥", [("跳转链", hops),
+                                                   ("表单分析", _summarize_form(info))])
+        print("发现密码加密迹象但未提取到公钥。请把报告发给维护者。")
+        return 1
+
+    # ── 3. 交互输入凭据 ──────────────────────────────────────
+    print("== 第 3 步：输入凭据（密码输入不回显；不会写入任何报告）==")
+    default_user = cfg.username
+    prompt = f"账号[{default_user}]：" if default_user else "账号："
+    entered = input(prompt).strip()
+    username = entered or default_user
+    if cfg.password:
+        use_saved = input("使用已保存的密码？[Y/n]：").strip().lower()
+        password = cfg.password if use_saved in ("", "y", "yes") else getpass.getpass("密码：")
+    else:
+        password = getpass.getpass("密码：")
+
+    # ── 4. 自动尝试登录 ──────────────────────────────────────
+    print("== 第 4 步：自动尝试登录 ==")
+    modes = ["rsa", "none"] if info.rsa_key else ["none"]
+    logged_in = False
+    tried: list[str] = []
+    for mode in modes:
+        try:
+            code, final = _attempt_login(session, cfg, info, username, password,
+                                         mode, hops)
+        except requests.RequestException as exc:
+            tried.append(f"{mode}: 请求异常 {type(exc).__name__}")
+            continue
+        verify = probe(session, cfg)
+        tried.append(f"{mode}: code={'有' if code else '无'}，登录后状态={verify.status.value}")
+        if verify.status is ProbeStatus.ONLINE:
+            logged_in = True
+            # 成功页信息直接从最终响应解析，不再重复请求 ePortal
+            from .auth.eportal import CAPTURED as E_CAP
+            body = final.text[:8192]
+            ui = re.search(E_CAP.user_index_pattern, body)
+            ka = re.search(E_CAP.keepalive_pattern, body)
+            hops.append(f"成功（加密={mode}，userIndex={ui.group(1) if ui else '未发现'}，"
+                        f"keepalive={ka.group(1) + 's' if ka else '未发现'}）")
+            break
+        # 记录失败响应片段供分析（不含密码——密码只在请求里，不在响应里）
+        hops.append(f"  失败响应片段：{re_sp(final.text)}")
+
+    sections = [("跳转链", hops), ("表单分析", _summarize_form(info)),
+                ("尝试记录", tried), ("结论", [])]
+    if logged_in:
+        protocol = {
+            "sso": {
+                "login_endpoint": _relative_if_possible(info.endpoint, info.page_url),
+                "username_field": info.username_field,
+                "password_field": info.password_field,
+                "extra_fields": {k: v for k, v in info.inputs.items()
+                                 if k not in (info.username_field, info.password_field)},
+                "password_encrypt": "rsa" if (mode == "rsa" and info.rsa_key) else "none",
+                "rsa_public_key": info.rsa_key or "",
+                "has_captcha": False,
+            },
+            "eportal": {"online_mode": "sso_pass" if code else "direct"},
+        }
+        protocol_path = paths.home / "protocol.json"
+        protocol_path.parent.mkdir(parents=True, exist_ok=True)
+        protocol_path.write_text(json.dumps(protocol, ensure_ascii=False, indent=2),
+                                 encoding="utf-8")
+        session_store.save(session, paths.session)
+        sections[3] = ("结论", [
+            f"✅ 登录成功（加密={mode}）",
+            f"已写自配置：{protocol_path}",
+            f"已保存 SSO 会话：{paths.session}（免密复用直至次日失效）",
+            "下一步：oit-portal daemon 即可全自动保活",
+        ])
+        _write_report(report, "登录成功", sections)
+        print("\n✅ 登录成功！协议已自动配置，会话已保存。")
+        print("之后直接运行 oit-portal daemon 即可全自动保活。")
+        return 0
+
+    sections[3] = ("结论", ["❌ 自动登录未成功。请把本报告发给维护者人工分析。"])
+    _write_report(report, "登录失败", sections)
+    print(f"\n❌ 自动登录未成功。请把 {report} 发给维护者。")
+    return 1
+
+
+def re_sp(text: str) -> str:
+    return re.sub(r"\s+", " ", text)[:200]
+
+
+def _relative_if_possible(endpoint: str, page_url: str) -> str:
+    """端点尽量存相对路径（跨设备更稳），同源时转换。"""
+    ep, pg = urlsplit(endpoint), urlsplit(page_url)
+    if ep.netloc == pg.netloc and ep.path.startswith("/"):
+        return ep.path + (f"?{ep.query}" if ep.query else "")
+    return endpoint

@@ -93,6 +93,7 @@ def run_daemon(cfg: Config, paths: AppPaths) -> int:
 
     session = requests.Session()
     session.headers["User-Agent"] = cfg.advanced.user_agent
+    session.trust_env = False  # 探测/认证直连，不走系统代理
     from .auth import session_store
     session_store.load(session, paths.session)
 
