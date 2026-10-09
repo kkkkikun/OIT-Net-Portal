@@ -72,5 +72,6 @@ cat <<'TIP'
    oit-portal status   查看状态
    oit-portal daemon   手动前台跑守护
    oit-portal stop     停止守护
-日志：~/.local/state/oit-portal/oit-portal.log
+日志：~/.config/oit-portal/logs/oit-portal.log
+     （若 home 不可写会自动退化到 $TMPDIR/oit-portal/）
 TIP
