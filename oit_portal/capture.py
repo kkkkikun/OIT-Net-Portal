@@ -65,6 +65,8 @@ class FormInfo:
     aes_source: str = ""
     candidates: list[str] = field(default_factory=list)  # JS 扫描出的登录接口候选
     evidence: list[str] = field(default_factory=list)    # 候选的来源上下文（排障用）
+    js_dump: list[str] = field(default_factory=list)     # 完整页面内联脚本 + 外链 JS 头部（写入报告）
+    scan_found: bool = True            # 是否真有 JS 扫描命中（False=全为启发式兜底）
 
 
 def _crypto_available() -> bool:
@@ -116,12 +118,21 @@ def _code_in(url: str) -> str | None:
 
 def analyze_form(session: requests.Session, cfg: Config, page_url: str,
                  html: str) -> FormInfo:
-    """分析登录页。Vue/SPA 页面无 <form> 也继续：加密信息与接口候选仍可提取。"""
+    """分析登录页。Vue/SPA 页面无 <form> 也继续：加密信息与接口候选仍可提取。
+
+    表单 ``action`` 解析规则：
+    - ``<form action="...">`` → endpoint = urljoin(page_url, action)
+    - ``<form>``（无 action）→ endpoint = page_url（浏览器原生行为：提交当前 URL）
+    - 无 ``<form>`` → endpoint 留空，调用方走 SPA JS 扫描分支
+    """
     info = FormInfo(page_url=page_url)
     action = htmlutil.form_action(html)
-    if action:
+    if action:                                  # "..." → 显式 action
         info.endpoint = urljoin(page_url, action)
+    elif action == "":                         # <form> 无 action 属性
+        info.endpoint = page_url
 
+    if action is not None:                     # 有 <form> 才解析字段
         for name, value, itype in htmlutil.inputs(html):
             info.inputs[name] = value
             if itype not in ("hidden", "submit", "button", "checkbox", "radio"):
@@ -143,6 +154,23 @@ def analyze_form(session: requests.Session, cfg: Config, page_url: str,
              if any(h in n.lower() for h in _USERNAME_HINT_RE)),
             candidates[0] if candidates else None,
         )
+
+        # 隐藏 password 输入兜底：用户学校实测 <input name="password" type="hidden">
+        # （Vue 的 v-model 把加密后的密文塞进去提交）——HTML 上没有 type="password"
+        # 元素，wizard 必须靠 name 字段识别
+        if info.password_field is None:
+            for n in info.inputs:
+                low = n.lower()
+                if low == "password" or low.endswith("password") or low == "pwd":
+                    info.password_field = n
+                    break
+
+        # 隐藏 username 字段兜底（某些学校把用户名也做成 hidden input）
+        if info.username_field is None:
+            for n in info.inputs:
+                if any(h in n.lower() for h in _USERNAME_HINT_RE):
+                    info.username_field = n
+                    break
 
     # 加密检测（无论有无表单都执行——Vue 页面的加密脚本在 head 内联）
     aes = htmlutil.find_aes(html)
@@ -178,31 +206,153 @@ _FRAMEWORK_JS_HINTS = ("framework", "jquery", "vue", "lodash", "weui", "qtip",
 _LOGIN_EP_RE = re.compile(
     r"['\"](?:https?://[^'\"\\\s]+)?(/[\w\-./]*(?:login|signin|token|doLogin)"
     r"[\w\-./]*)['\"]", re.I)
+# 显式 axios/fetch/$http 调用捕获（命中即视为「JS 里在调接口」）
+_HTTP_CALL_RE = re.compile(
+    r"(?:axios|fetch|XMLHttpRequest|this\.\$http|\$http|\$ajax)\s*[(.]"
+    r"\s*(?:post|put|request|\{)?\s*\(?\s*"
+    r"['\"](?:https?://[^'\"\\\s]+)?(/[^\s'\"\\,?]+)['\"]", re.I)
+# jQuery 风格的 HTTP 调用（$.post / $.ajax / $.get / $.zytec.*）+ 配置对象里的 url 字段
+_JQUERY_CALL_RE = re.compile(
+    r"\$\.(?:post|get|ajax|zytec)\s*[(.]?\s*(?:post|get|put|action|submit|"
+    r"doLogin|login)?\s*\(?\s*"
+    r"['\"](?:https?://[^'\"\\\s]+)?(/[^\s'\"\\,?]+)['\"]", re.I)
+# jQuery ajax 配置对象：{url: '/foo', ...}
+_JQUERY_AJAX_URL_RE = re.compile(
+    r"url\s*:\s*['\"](?:https?://[^'\"\\\s]+)?(/[^\s'\"\\,?]+)['\"]", re.I)
+# 仅当 JS 里出现 axios 等调用但上面没抓到路径时，回退到「URL 字面量」模式
+_URL_LITERAL_RE = re.compile(
+    r"['\"](/[a-zA-Z][\w\-./]{1,80}/(?:login|signin|doLogin|token|auth|widget|verify|submit)"
+    r"[^\s'\"\\]*)['\"]", re.I)
+# 抓页面里出现的「动态 token/指纹字段」名（fingerprint/verify_token/verify_code…）
+_TOKEN_FIELD_HINTS = ("fingerprint", "verify_token", "verify_code", "captcha",
+                     "slider_token", "ticket", "nonce", "csrf", "_token")
 _STATIC_EXT = (".css", ".js", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico",
                ".woff", ".woff2", ".ttf", ".map")
+# 扫描无果时的启发式兜底（覆盖常见 OAuth2/SSO 命名约定，以及「轻鸥栈」式 widget 控制器）
+# widget 控制器：实际 layer/widget/action 组合取决于服务端路由约定。
+# 下面枚举常见命名组合（中文校园网常见 widget 类名），覆盖用户学校实测风格。
+_WIDGET_LAYERS = ("user", "login", "auth", "sso")
+_WIDGET_CLASSES = ("User", "Login", "Account", "Auth", "Credential", "Password",
+                   "Passport", "Member", "Signin", "AccountPassword", "LoginForm",
+                   "SSO", "CredentialLogin", "AuthLogin")
+_WIDGET_ACTIONS = ("login", "doLogin", "submit", "doSubmit", "signin", "authenticate")
+
+_HEURISTIC_ENDPOINTS = (
+    "/auth/oauth/token",     # OAuth2 token (Spring Authorization Server 等)
+    "/auth/oauth/login",     # Spring Security 自定义
+    "/auth/oauth/doLogin",
+    "/auth/oauth/authorize",
+    "/auth/login",
+    "/auth/doLogin",
+    "/auth/ajaxLogin",
+    "/auth/submit",
+    # widget 控制器全组合展开（layer × widget × action）
+    *(f"/auth/widget?layer={layer}&widget={w}&action={a}"
+      for layer in _WIDGET_LAYERS
+      for w in _WIDGET_CLASSES
+      for a in _WIDGET_ACTIONS),
+    "/auth/widget",
+    "/api/login",
+    "/api/auth/login",
+    "/oauth/token",
+    "/login",
+    "/user/login",
+)
+
+
+def _extract_inline_scripts(html: str) -> list[str]:
+    """提取所有无 src 的 <script>...</script> 内容（Vue 应用的 axios 调用常藏在这里）。"""
+    blocks: list[str] = []
+    for m in re.finditer(r"<script\b(?![^>]*\bsrc\s*=)[^>]*>(.*?)</script>",
+                         html, re.I | re.S):
+        body = m.group(1).strip()
+        if body:
+            blocks.append(body)
+    return blocks
+
+
+def _extract_vue_templates(html: str) -> list[tuple[str, str]]:
+    """提取 <script type="text/x-template" id="...">...</script> 块。
+
+    Vue 2 的组件模板常写在这里（form action / 提交逻辑等都可能藏在里面）。
+    """
+    out: list[tuple[str, str]] = []
+    for m in re.finditer(
+        r"<script\b[^>]*\btype\s*=\s*['\"](?:text/x-template|"
+        r"text/template|x-template|vue-template)['\"][^>]*\bid\s*=\s*['\"]([^'\"]+)['\"][^>]*>"
+        r"(.*?)</script>", html, re.I | re.S):
+        out.append((m.group(1), m.group(2).strip()))
+    # 也覆盖 id 在前面的情况
+    for m in re.finditer(
+        r"<script\b[^>]*\bid\s*=\s*['\"]([^'\"]+)['\"][^>]*\btype\s*=\s*['\"](?:text/x-template|"
+        r"text/template|x-template|vue-template)['\"][^>]*>"
+        r"(.*?)</script>", html, re.I | re.S):
+        if not any(m.group(1) == eid for eid, _ in out):
+            out.append((m.group(1), m.group(2).strip()))
+    return out
 
 
 def scan_login_endpoints(session: requests.Session, cfg: Config, page_url: str,
-                         html: str) -> tuple[list[str], list[str]]:
+                         html: str) -> tuple[list[str], list[str], list[str]]:
     """无 <form> 的 SPA 登录页：收集登录接口路径候选。
 
     先扫页面内联脚本（Vue 应用的登录调用常写在内联 <script> 里），
     再扫外链 JS（auth/login 相关文件优先，框架库靠后）。
-    返回 (候选列表, 证据上下文列表)。
+    返回 (候选列表, 证据上下文列表, 报告用的「页面内联脚本 + 外链 JS 摘要」)。
+
+    候选为空会附带启发式常见登录接口路径兜底（不会泄露到报告，
+    仅供向导自动尝试——避免把猜测路径写进 protocol.json 让维护者误以为是协议事实）。
     """
     candidates: list[str] = []
     evidence: list[str] = []
+    js_dump: list[str] = []
+    token_fields: list[str] = []
 
-    def harvest(text: str, source: str) -> None:
-        for m in _LOGIN_EP_RE.finditer(text[:_MAX_JS_BYTES]):
-            path = m.group(1).split("?")[0]
-            if path.lower().endswith(_STATIC_EXT) or path in candidates:
-                continue
-            candidates.append(path)
-            ctx = text[max(0, m.start() - 100):m.end() + 100]
-            evidence.append(f"{source}: …{re_sp(ctx)}…")
+    # ── Vue 组件模板（常含 form action/真实接口，搜索并写入报告）──
+    templates = _extract_vue_templates(html)
+    if templates:
+            js_dump.append("── Vue 组件模板（<script type='text/x-template'>）──")
+            for tid, tbody in templates:
+                js_dump.append(f"模板 #{tid} ({len(tbody)} 字节)：")
+                js_dump.append(tbody[:_MAX_JS_BYTES])
 
-    harvest(html, "页面内联")
+    # ── 页面内联脚本：全文写入报告（便于维护者人工识别真实接口）──
+    for idx, body in enumerate(_extract_inline_scripts(html)):
+        head = body[:_MAX_JS_BYTES]
+        js_dump.append(f"页面内联 <script> #{idx + 1} ({len(body)} 字节)：")
+        js_dump.append(head)
+
+        for pat_name, pat in (
+            ("axios/fetch", _HTTP_CALL_RE),
+            ("jQuery $.{post,ajax,zytec}", _JQUERY_CALL_RE),
+            ("jQuery ajax {url:}", _JQUERY_AJAX_URL_RE),
+            ("路径关键字", _LOGIN_EP_RE),
+            ("URL 字面量", _URL_LITERAL_RE),
+        ):
+            for m in pat.finditer(head):
+                raw = m.group(1)
+                base = raw.split("?")[0]
+                # 过滤掉明显的辅助/验证类 URL（不是登录提交目标）：
+                # slider widget / get_verify 验证码 / image_verify 图形码 / 独立 captcha 模块
+                low_q = raw.lower()
+                if (re.search(r"[?&](widget|action|type)\s*=\s*(slider|get_verify|"
+                              r"image_verify|check_verify|send_sms|captcha|"
+                              r"image_captcha|verify_code|send_code)\b", low_q)
+                        or "/captcha/" in low_q
+                        or "/slider/" in low_q):
+                    continue
+                if base.lower().endswith(_STATIC_EXT) or raw in candidates:
+                    continue
+                candidates.append(raw)
+                ctx = head[max(0, m.start() - 80):m.end() + 80]
+                evidence.append(f"页面内联[{pat_name}]: …{re_sp(ctx)}…")
+
+        # 探测动态 token / 指纹字段名（用于报告诊断，告知维护者表单还缺什么字段）
+        for hint in _TOKEN_FIELD_HINTS:
+            if re.search(rf"\b{re.escape(hint)}\b", head, re.I) and hint not in token_fields:
+                token_fields.append(hint)
+
+    # ── 外链 JS：按相关度排序，auth/login/app 优先，框架库靠后 ──
     srcs = dict.fromkeys(htmlutil.script_sources(html))
 
     def priority(src: str) -> int:
@@ -213,6 +363,7 @@ def scan_login_endpoints(session: requests.Session, cfg: Config, page_url: str,
             return 2   # 框架库放最后甚至跳过
         return 1
 
+    fetched: list[tuple[str, str]] = []
     for src in sorted(srcs, key=priority)[:12]:
         js_url = urljoin(page_url, src)
         if urlsplit(js_url).netloc != urlsplit(page_url).netloc:
@@ -221,12 +372,70 @@ def scan_login_endpoints(session: requests.Session, cfg: Config, page_url: str,
             js = session.get(js_url, timeout=cfg.advanced.timeout_sec).text
         except requests.RequestException:
             continue
-        harvest(js, f"外链 {src}")
-    # 页面自身路径作为末位候选（部分 SPA 提交回当前地址）
-    own = urlsplit(page_url).path
-    if own and own not in candidates:
-        candidates.append(own)
-    return candidates, evidence
+        fetched.append((src, js))
+        head = js[:_MAX_JS_BYTES]
+
+        any_match = False
+        for pat_name, pat in (
+            ("axios/fetch", _HTTP_CALL_RE),
+            ("jQuery $.{post,ajax,zytec}", _JQUERY_CALL_RE),
+            ("jQuery ajax {url:}", _JQUERY_AJAX_URL_RE),
+            ("路径关键字", _LOGIN_EP_RE),
+            ("URL 字面量", _URL_LITERAL_RE),
+        ):
+            for m in pat.finditer(head):
+                raw = m.group(1)
+                base = raw.split("?")[0]
+                low_q = raw.lower()
+                if (re.search(r"[?&](widget|action|type)\s*=\s*(slider|get_verify|"
+                              r"image_verify|check_verify|send_sms|captcha|"
+                              r"image_captcha|verify_code|send_code)\b", low_q)
+                        or "/captcha/" in low_q
+                        or "/slider/" in low_q):
+                    continue
+                if base.lower().endswith(_STATIC_EXT) or raw in candidates:
+                    continue
+                candidates.append(raw)
+                ctx = head[max(0, m.start() - 80):m.end() + 80]
+                evidence.append(f"外链 {src}[{pat_name}]: …{re_sp(ctx)}…")
+                any_match = True
+
+        for hint in _TOKEN_FIELD_HINTS:
+            if re.search(rf"\b{re.escape(hint)}\b", head, re.I) and hint not in token_fields:
+                token_fields.append(hint)
+
+    # 报告：auth/login/common 等业务 JS 全文写入摘要（bind_submit 定义常藏在里面）；
+    # 框架库只写前 800 字符。全文阈值 20KB，避免报告爆炸。
+    _FULL_DUMP_LIMIT = 20_000
+    for src, js in fetched:
+        low = src.lower()
+        is_auth_like = ("auth" in low or "login" in low or "common" in low
+                        or "submit" in low or "zytec" in low)
+        if is_auth_like and len(js) <= _FULL_DUMP_LIMIT:
+            js_dump.append(f"外链 JS {src} ({len(js)} 字节，全文)：")
+            js_dump.append(js)
+        else:
+            js_dump.append(f"外链 JS {src} ({len(js)} 字节，前 800 字符)：")
+            js_dump.append(js[:800])
+
+    if token_fields:
+        js_dump.append("页面/JS 里出现的动态 token 字段名："
+                       + ", ".join(token_fields))
+
+    # 启发式兜底：去重（精确匹配整路径）后追加 scan 没命中的启发式候选
+    # （关键修复：即便 scan 找到了 /auth/widget 基路径，仍要试带 query 的变体；
+    #  widget 控制器的 layer/widget/action 三参数不可达如果只发基路径）
+    added_heuristics = [h for h in _HEURISTIC_ENDPOINTS if h not in candidates]
+    if added_heuristics:
+        candidates.extend(added_heuristics)
+        if candidates[:len(added_heuristics)] != added_heuristics:
+            js_dump.append("启发式追加：scan 已找到部分候选但缺 query 命名变体 "
+                           + ", ".join(added_heuristics))
+        else:
+            js_dump.append("启发式兜底：扫描无果，按 OAuth2/SSO 常见命名追加候选 "
+                           + ", ".join(added_heuristics))
+
+    return candidates, evidence, js_dump
 
 
 def _transform_password(password: str, mode: str, info: FormInfo) -> str:
@@ -239,9 +448,28 @@ def _transform_password(password: str, mode: str, info: FormInfo) -> str:
     return password
 
 
+def _looks_like_spa_catchall(resp: requests.Response, form_text: str) -> bool:
+    """POST 命中 SPA 路由兜底（服务器把任意路径返回 index.html）。
+
+    判定：HTML 响应 + Content-Type 文本 + 首 200 字符与登录页显著相似。
+    返回 True 表示这次 POST 没打到真实 API，记录到报告供分析。
+    """
+    ctype = resp.headers.get("Content-Type", "").lower()
+    if "html" not in ctype:
+        return False
+    if "<form" in resp.text[:4096].lower() or "<input" in resp.text[:4096].lower():
+        return True   # 真的把表单页吐回来了
+    head = resp.text[:200]
+    form_head = form_text[:200]
+    # 首段显著相似（去除空白后 80% 重合）视为同一 SPA
+    if not head or not form_head:
+        return False
+    return head.replace(" ", "")[:120] == form_head.replace(" ", "")[:120]
+
+
 def _attempt_login(session: requests.Session, cfg: Config, info: FormInfo,
                    endpoint: str, kind: str, username: str, password: str,
-                   mode: str, hops: list[str]) -> tuple[str | None, requests.Response]:
+                   mode: str, hops: list[str], form_text: str) -> tuple[str | None, requests.Response]:
     payload = {k: v for k, v in info.inputs.items()
                if k not in (info.username_field, info.password_field)}
     payload[info.username_field] = username
@@ -264,6 +492,9 @@ def _attempt_login(session: requests.Session, cfg: Config, info: FormInfo,
             hops.append(f"  响应体发现跳转：{url[:160]}")
             final, final_url = _walk(session, url, cfg, hops)
             return _code_in(final_url), final
+    # SPA 路由兜底检测：POST 拿回来的文本与登录页首段高度相似
+    if _looks_like_spa_catchall(post, form_text):
+        hops.append(f"  ⚠ 命中 SPA 路由兜底（响应与登录页首段一致）→ 跳过此端点")
     return None, post
 
 
@@ -380,16 +611,22 @@ def run_capture(cfg: Config, paths: AppPaths) -> int:
     if not info.endpoint:
         # Vue/SPA 页面无 <form>：扫描内联脚本与外链 JS 寻找登录接口候选
         print("  页面无 <form>（Vue/JS 动态渲染），扫描脚本寻找登录接口……")
-        info.candidates, info.evidence = scan_login_endpoints(session, cfg,
-                                                              final_url, resp.text)
+        info.candidates, info.evidence, js_dump = scan_login_endpoints(
+            session, cfg, final_url, resp.text)
         for line in _summarize_form(info):
             print(f"  {line}")
         hops.append(f"JS 扫描接口候选：{info.candidates or '无'}")
+        # 「页面/JS 摘要」放进 info 给后续报告用
+        info.js_dump = js_dump
+        # 启发式兜底（仅当 JS 扫描无果时由 scan_login_endpoints 追加）不算真扫描结果
+        info.scan_found = any(c not in _HEURISTIC_ENDPOINTS for c in info.candidates) \
+            if info.candidates else False
         if not info.candidates:
             _write_report(report, "未找到登录表单与接口", [
                 ("探测", pr_lines),
                 ("跳转链", hops),
-                ("最终页面片段", [resp.text[:20000].replace("\n", " ")]),
+                ("页面/JS 摘要", js_dump + ["（报告末尾追加了完整表单页前 1000 字符）",
+                                            resp.text[:1000].replace("\n", " ")]),
             ])
             print(f"未找到登录表单，脚本扫描也无接口候选。请把 {report} 发给维护者。")
             return 1
@@ -443,12 +680,14 @@ def run_capture(cfg: Config, paths: AppPaths) -> int:
     used_endpoint = used_mode = ""
     code: str | None = None
     final = None
+    form_text = resp.text  # 用于 SPA 路由兜底检测
     for endpoint in endpoints:
         for kind in ("form", "json"):
             for mode in modes:
                 try:
                     code, final = _attempt_login(session, cfg, info, endpoint, kind,
-                                                 username, password, mode, hops)
+                                                 username, password, mode, hops,
+                                                 form_text)
                 except requests.RequestException as exc:
                     tried.append(f"{endpoint}[{kind}] {mode}: 请求异常 {type(exc).__name__}")
                     continue
@@ -477,10 +716,16 @@ def run_capture(cfg: Config, paths: AppPaths) -> int:
         if logged_in:
             break
 
-    sections = [("探测", pr_lines), ("跳转链", hops),
-                ("表单分析", _summarize_form(info)),
-                ("JS 证据", info.evidence or ["（无）"]),
-                ("尝试记录", tried), ("结论", [])]
+    # 「页面/JS 摘要」章节：登录失败时尤其重要（维护者需要看见真实接口上下文）
+    js_section = info.js_dump if info.js_dump else ["（无）"]
+    sections: list[tuple[str, list[str]]] = [
+        ("探测", pr_lines),
+        ("跳转链", hops),
+        ("表单分析", _summarize_form(info)),
+        ("页面/JS 摘要", js_section),
+        ("JS 证据", info.evidence or ["（无）"]),
+        ("尝试记录", tried),
+    ]
     if logged_in:
         protocol = {
             "sso": {
@@ -503,20 +748,31 @@ def run_capture(cfg: Config, paths: AppPaths) -> int:
         protocol_path.write_text(json.dumps(protocol, ensure_ascii=False, indent=2),
                                  encoding="utf-8")
         session_store.save(session, paths.session)
-        sections[3] = ("结论", [
+        sections.append(("结论", [
             f"✅ 登录成功（接口={used_endpoint}，加密={used_mode}）",
             f"已写自配置：{protocol_path}",
             f"已保存 SSO 会话：{paths.session}（免密复用直至次日失效）",
             "下一步：oit-portal daemon 即可全自动保活",
-        ])
+        ]))
         _write_report(report, "登录成功", sections)
         print("\n✅ 登录成功！协议已自动配置，会话已保存。")
         print("之后直接运行 oit-portal daemon 即可全自动保活。")
         return 0
 
-    sections[3] = ("结论", ["❌ 自动登录未成功。请把本报告发给维护者人工分析。"])
+    sections.append(("结论", [
+        "❌ 自动登录未成功。请把本报告发给维护者人工分析。",
+        "",
+        "排障下一步（30 秒搞定）：",
+        "  1. 用浏览器打开登录页，按 F12 → Elements → 搜索 <form 看 action 属性",
+        "     （例：<form action=\"/auth/widget?layer=user&widget=Account&action=login\" method=\"post\">）",
+        "  2. 或在登录页手动完成一次登录，把成功页的 request URL 发我",
+        "",
+        "如果页面是 Vue 渲染（向导未能从静态 HTML 拿到 form），检查「页面/JS 摘要」里的",
+        "Vue 组件模板 <script type=\"text/x-template\"> 段，可能藏有 action 表达式。",
+    ]))
     _write_report(report, "登录失败", sections)
     print(f"\n❌ 自动登录未成功。请把 {report} 发给维护者。")
+    print("   （报告「结论」段含 30 秒人工排查指引）")
     return 1
 
 

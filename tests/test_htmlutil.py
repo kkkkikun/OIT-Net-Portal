@@ -35,6 +35,18 @@ def test_form_action():
     assert htmlutil.form_action(LOGIN_PAGE) == "/auth/user/login"
 
 
+def test_form_action_sentinel_for_no_action():
+    """<form method=POST> 无 action 属性应返回 ""（区分于无表单的 None）。
+
+    浏览器原生行为：表单无 action 时提交到当前 URL。wizard 必须能区分
+    「表单存在（无 action）」与「页面无表单」这两种情形。
+    """
+    assert htmlutil.form_action('<form method="POST"><input name="u"/></form>') == ""
+    assert htmlutil.form_action('<form action="/login"><input name="u"/></form>') == "/login"
+    assert htmlutil.form_action('<div><span>no form here</span></div>') is None
+    assert htmlutil.form_action("") is None
+
+
 def test_inputs_parse():
     fields = htmlutil.inputs(LOGIN_PAGE)
     names = [n for n, _v, _t in fields]

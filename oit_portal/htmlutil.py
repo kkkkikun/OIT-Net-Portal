@@ -33,10 +33,18 @@ def attr(tag: str, name: str) -> str | None:
 
 
 def form_action(html: str) -> str | None:
+    """返回表单 action。
+
+    - ``"<url>"``：表单存在且显式设置了 ``action``
+    - ``""``：**表单存在但无 action 属性**（浏览器原生行为是提交到当前 URL，
+      调用方需要用 page_url 兜底）
+    - ``None``：HTML 里完全没有 ``<form>``（走 SPA 扫描分支）
+    """
     for tag in FORM_RE.finditer(html):
         action = attr(tag.group(0), "action")
         if action is not None:
             return action
+        return ""
     return None
 
 
