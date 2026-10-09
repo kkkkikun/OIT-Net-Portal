@@ -37,7 +37,7 @@ oit-portal stop          # 停止
 
 - **重启手机**：2 分钟内应自动完成校园网登录（无需亮屏操作）
 - **锁屏过夜**：wake-lock 保证 CPU 不冻结；若仍被系统冻结，检查电池豁免是否生效
-- 日志：`~/.local/state/oit-portal/oit-portal.log`
+- 日志：`~/.config/oit-portal/logs/oit-portal.log`
 
 ## 常见问题
 
@@ -46,5 +46,5 @@ oit-portal stop          # 停止
 | 重启后没自动登录 | Termux:Boot 没打开过一次；或 ROM 杀后台 → 检查两步手动设置 |
 | 锁屏后掉线 | 电池优化未豁免；MIUI 等需锁定 Termux 后台任务（最近任务上锁） |
 | `termux-wake-lock: not found` | `pkg install termux-tools` |
-| 想看实时日志 | `tail -f ~/.local/state/oit-portal/oit-portal.log` |
+| 想看实时日志 | `tail -f ~/.config/oit-portal/logs/oit-portal.log` |
 | 需要验证码时 | `oit-portal login-info` 查看人工登录引导，浏览器登一次后 daemon 自动收割会话 |

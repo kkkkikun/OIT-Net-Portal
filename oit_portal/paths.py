@@ -61,8 +61,11 @@ def resolve_paths() -> AppPaths:
     env = os.environ.get("OIT_PORTAL_HOME")
     home = Path(env).expanduser() if env else (_portable_home() or _default_home())
     if is_termux():
-        # Termux：配置在 ~/.config，状态（日志）遵循 XDG_STATE
-        state = Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local" / "state"))) / APP_NAME
+        # Termux：所有数据集中放在 ~/.config/oit-portal/（包括日志）。
+        # 早期版本用过 ~/.local/state/，但部分 Termux 环境（pkg/python 安装后）
+        # 该路径不可写——一旦 PermissionError 就会让 wizard/daemon 一起崩。
+        # 集中目录避免这种坑，也跟其他平台行为一致。
+        state = home / "logs"
     else:
         state = home / "logs"
     return AppPaths(
