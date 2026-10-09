@@ -32,11 +32,13 @@ class ProbeResult:
     redirect_url: str | None = None   # CAPTIVE 时的 302 Location（登录流程入口）
     probe_url: str = ""
     detail: str = ""
+    body: str | None = None           # 200 注入式认证页的 HTML（无 302 的劫持形态）
 
     def __str__(self) -> str:  # 便于日志/CLI 输出
         base = self.status.value.upper()
         if self.status is ProbeStatus.CAPTIVE:
-            return f"{base} -> {self.redirect_url}"
+            return f"{base} -> {self.redirect_url}" if self.redirect_url \
+                else f"{base}（200 注入式认证页）"
         return f"{base} ({self.detail})" if self.detail else base
 
 
@@ -56,29 +58,49 @@ def _probe_one(session: requests.Session, url: str, timeout: int) -> ProbeResult
         return ProbeResult(ProbeStatus.CAPTIVE, redirect_url=location, probe_url=url,
                            detail=f"HTTP {resp.status_code}")
     if resp.status_code == 200:
-        text = resp.text[:4096]
+        text = resp.text[:65536]
         if "Success" in text:
             return ProbeResult(ProbeStatus.ONLINE, probe_url=url)
-        # 200 但无 Success 标记：可能被 AC 注入认证页
+        # 200 但无 Success 标记：AC 直接在探测 URL 上注入了认证页（无 302 的劫持形态）
         return ProbeResult(ProbeStatus.CAPTIVE, redirect_url=None, probe_url=url,
-                           detail="HTTP 200 无 Success 标记")
+                           detail="HTTP 200 无 Success 标记（注入式认证页）",
+                           body=text)
     return ProbeResult(ProbeStatus.OFFLINE, probe_url=url, detail=f"HTTP {resp.status_code}")
 
 
 def probe(session: requests.Session, cfg: Config) -> ProbeResult:
-    """轮询探测池。ONLINE 时用第二个 URL 双确认，防单个探测点被白名单放行误判。"""
+    """轮询探测池。
+
+    - 302 劫持（带 Location）是最强证据，立即采用并返回
+    - 200 注入式劫持先记为 fallback，继续尝试其他探测点找 302 形态
+      （找到则用 302——能解析出 OAuth 挑战；都没有才回落注入页）
+    - 已见注入式劫持时，后续探测点的「在线」判定不可信（可能是白名单放行），忽略
+    - ONLINE 时用第二个 URL 双确认，防单个探测点被白名单放行误判
+    """
+    fallback: ProbeResult | None = None
     for idx, url in enumerate(cfg.probe.urls):
         result = _probe_one(session, url, cfg.advanced.timeout_sec)
         logger.debug("probe %s -> %s", url, result.status.value)
 
-        if result.status is ProbeStatus.ONLINE and idx == 0 and len(cfg.probe.urls) > 1:
-            second = _probe_one(session, cfg.probe.urls[1], cfg.advanced.timeout_sec)
-            if second.status is ProbeStatus.CAPTIVE:
-                logger.info("双确认不一致（%s 判在线，%s 判劫持），按劫持处理",
-                            url, cfg.probe.urls[1])
-                return second
+        if result.status is ProbeStatus.CAPTIVE:
+            if result.redirect_url:
+                return result
+            if fallback is None:
+                fallback = result
+            continue
+        if result.status is ProbeStatus.ONLINE:
+            if fallback is not None:
+                logger.debug("已有注入式劫持记录，忽略 %s 的在线判定", url)
+                continue
+            if idx == 0 and len(cfg.probe.urls) > 1:
+                second = _probe_one(session, cfg.probe.urls[1], cfg.advanced.timeout_sec)
+                if second.status is ProbeStatus.CAPTIVE:
+                    logger.info("双确认不一致（%s 判在线，%s 判劫持），按劫持处理",
+                                url, cfg.probe.urls[1])
+                    return second
+                return result
             return result
-        if result.status is not ProbeStatus.OFFLINE:
-            return result
+    if fallback is not None:
+        return fallback
     return ProbeResult(ProbeStatus.OFFLINE,
                        detail="全部探测点不可达（未连 WiFi 或无路由）")

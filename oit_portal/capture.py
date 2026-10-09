@@ -19,6 +19,7 @@ import sys
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from urllib.parse import parse_qs, urljoin, urlsplit
 
 import requests
@@ -39,6 +40,16 @@ _MAX_HOPS = 10
 _MAX_JS_FILES = 6
 _MAX_JS_BYTES = 300_000
 _USERNAME_HINT_RE = ("user", "account", "username", "xh", "stu", "login")
+
+# 注入式认证页里的 meta refresh 跳转（部分 AC 注入的是「跳转中」页而非表单本体）
+_META_REFRESH_RE = re.compile(
+    r"http-equiv=['\"]?refresh['\"]?[^>]*content=['\"]?\d+\s*;\s*url=([^'\">]+)",
+    re.I)
+
+
+def _meta_refresh_target(html: str) -> str | None:
+    m = _META_REFRESH_RE.search(html[:16384])
+    return m.group(1).strip() if m else None
 
 
 @dataclass
@@ -222,6 +233,11 @@ def run_capture(cfg: Config, paths: AppPaths) -> int:
     print("== 第 1 步：探测网络状态 ==")
     pr = probe(session, cfg)
     print(f"当前状态：{pr}")
+    pr_lines = [
+        f"状态：{pr.status.value}（{pr.detail or '无'}）",
+        f"探测点：{pr.probe_url or '（池内全部不可达）'}",
+        f"302 Location：{pr.redirect_url or '无（200 注入式认证页）'}",
+    ]
     if pr.status is ProbeStatus.ONLINE:
         print("已在线。请先让设备回到未登录状态：在认证成功页点「注销」，"
               "或断开重连校园 WiFi，然后重新运行本向导。")
@@ -230,23 +246,49 @@ def run_capture(cfg: Config, paths: AppPaths) -> int:
         print("未检测到网络。请先连接校园 WiFi 再运行。")
         return 2
 
-    try:
-        challenge = PortalChallenge.from_redirect(pr.redirect_url)
-    except Exception as exc:  # noqa: BLE001
-        _write_report(report, "302 解析失败", [("跳转链", hops),
-                                              ("错误", [str(exc)])])
-        print(f"302 Location 解析失败：{exc}\n请把 {report} 发给维护者。")
-        return 1
-    hops.append(f"探测点 {pr.probe_url} -> 302 (Location: {pr.redirect_url[:200]})")
+    challenge = None
+    if pr.redirect_url:
+        # ── 302 劫持形态：解析 OAuth 挑战并跟随跳转链 ──────────
+        try:
+            challenge = PortalChallenge.from_redirect(pr.redirect_url)
+        except Exception as exc:  # noqa: BLE001
+            _write_report(report, "302 解析失败",
+                          [("探测", pr_lines), ("跳转链", hops),
+                           ("错误", [f"{type(exc).__name__}: {exc}"])])
+            print(f"302 Location 解析失败：{exc}\n请把 {report} 发给维护者。")
+            return 1
+        hops.append(f"探测点 {pr.probe_url} -> 302 (Location: {pr.redirect_url[:200]})")
 
-    # ── 2. 跳转链 + 表单分析 ─────────────────────────────────
-    print("== 第 2 步：跟随跳转链，分析登录表单 ==")
-    try:
-        resp, final_url = _walk(session, challenge.authorize_url, cfg, hops)
-    except requests.RequestException as exc:
-        _write_report(report, "跳转链中断", [("跳转链", hops)])
-        print(f"跳转链请求失败：{exc}")
-        return 1
+        print("== 第 2 步：跟随跳转链，分析登录表单 ==")
+        try:
+            resp, final_url = _walk(session, challenge.authorize_url, cfg, hops)
+        except requests.RequestException as exc:
+            _write_report(report, "跳转链中断",
+                          [("探测", pr_lines), ("跳转链", hops)])
+            print(f"跳转链请求失败：{exc}")
+            return 1
+    else:
+        # ── 200 注入式形态：探测响应本身即（或包含）登录页 ─────
+        print("== 第 2 步：检测到 200 注入式认证页（无 302 跳转）==")
+        body = pr.body or ""
+        target = _meta_refresh_target(body)
+        if target:
+            hops.append(f"探测点 {pr.probe_url} -> 200 注入页，"
+                        f"跟随页面跳转目标 {target[:120]}")
+            try:
+                resp, final_url = _walk(session, urljoin(pr.probe_url, target),
+                                        cfg, hops)
+            except requests.RequestException as exc:
+                _write_report(report, "注入页跳转中断",
+                              [("探测", pr_lines), ("跳转链", hops)])
+                print(f"注入页跳转请求失败：{exc}")
+                return 1
+        else:
+            # 无 meta 跳转：注入的就是表单页本体，直接分析
+            resp = SimpleNamespace(text=body, headers={}, status_code=200,
+                                   url=pr.probe_url)
+            final_url = pr.probe_url
+            hops.append(f"探测点 {pr.probe_url} -> 200 注入页（直接作为表单页分析）")
 
     if _code_in(final_url):
         # 会话仍有效，authorize 直接发了 code——无需账密即可验证整条链路
@@ -254,7 +296,7 @@ def run_capture(cfg: Config, paths: AppPaths) -> int:
         print("检测到 SSO 会话仍有效（跳转链直接发出 code），正在验证……")
         code = _code_in(final_url)
         verify = probe(session, cfg)
-        sections = [("跳转链", hops),
+        sections = [("探测", pr_lines), ("跳转链", hops),
                     ("结论", [f"code={code[:6]}***",
                               f"最终页面片段：{re_sp(resp.text)}",
                               f"复测：{verify}"])]
@@ -273,18 +315,19 @@ def run_capture(cfg: Config, paths: AppPaths) -> int:
 
     if not info.endpoint:
         _write_report(report, "未找到登录表单", [
+            ("探测", pr_lines),
             ("跳转链", hops),
             ("最终页面片段", [resp.text[:3000].replace("\n", " ")]),
         ])
         print(f"未解析出登录表单（可能是 JS 动态渲染）。请把 {report} 发给维护者。")
         return 1
     if info.has_captcha:
-        _write_report(report, "发现验证码", [("跳转链", hops),
+        _write_report(report, "发现验证码", [("探测", pr_lines), ("跳转链", hops),
                                              ("表单分析", _summarize_form(info))])
         print("登录页有验证码，无法全自动处理。请把报告发给维护者走人工适配。")
         return 1
     if info.rsa_hint_only:
-        _write_report(report, "RSA 痕迹但无公钥", [("跳转链", hops),
+        _write_report(report, "RSA 痕迹但无公钥", [("探测", pr_lines), ("跳转链", hops),
                                                    ("表单分析", _summarize_form(info))])
         print("发现密码加密迹象但未提取到公钥。请把报告发给维护者。")
         return 1
@@ -328,7 +371,8 @@ def run_capture(cfg: Config, paths: AppPaths) -> int:
         # 记录失败响应片段供分析（不含密码——密码只在请求里，不在响应里）
         hops.append(f"  失败响应片段：{re_sp(final.text)}")
 
-    sections = [("跳转链", hops), ("表单分析", _summarize_form(info)),
+    sections = [("探测", pr_lines), ("跳转链", hops),
+                ("表单分析", _summarize_form(info)),
                 ("尝试记录", tried), ("结论", [])]
     if logged_in:
         protocol = {

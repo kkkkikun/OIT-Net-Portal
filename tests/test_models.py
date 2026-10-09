@@ -30,3 +30,11 @@ def test_missing_client_id_rejected():
 def test_non_authorize_url_rejected():
     with pytest.raises(ProtocolMismatch):
         PortalChallenge.from_redirect("http://example.com/portal")
+
+
+def test_none_location_rejected_with_clear_message():
+    """注入式认证页（无 302 Location）传入 None 应给出明确错误而非晦涩 TypeError。"""
+    with pytest.raises(ProtocolMismatch, match="注入式"):
+        PortalChallenge.from_redirect(None)
+    with pytest.raises(ProtocolMismatch, match="注入式"):
+        PortalChallenge.from_redirect("")

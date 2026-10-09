@@ -69,7 +69,8 @@ class AuthFlow:
         # CAPTIVE：进入登录流程
         if not pr.redirect_url:
             return FlowResult(FlowOutcome.FAILED,
-                              detail="被劫持但未拿到 302 Location，无法构造登录挑战")
+                              detail="被劫持但未拿到 302 Location（200 注入式认证页），"
+                                     "请先运行 oit-portal capture 完成协议适配")
         try:
             challenge = PortalChallenge.from_redirect(pr.redirect_url)
         except ProtocolMismatch as exc:

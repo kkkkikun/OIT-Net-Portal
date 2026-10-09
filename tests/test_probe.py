@@ -71,3 +71,34 @@ def test_first_down_second_204_online():
     s.add_url(APPLE, FakeResponse(204))
     result = probe(s, _cfg())
     assert result.status is ProbeStatus.ONLINE
+
+
+def test_injected_200_page_is_captive_with_body():
+    """AC 在探测 URL 上直接注入认证页（200 无 Success）→ CAPTIVE 且带页面内容。"""
+    s = FakeSession()
+    s.add_url(MIUI, FakeResponse(200, text="<html><form>portal</form></html>"))
+    s.add_url(APPLE, FakeResponse(200, text="<html><form>portal</form></html>"))
+    result = probe(s, _cfg())
+    assert result.status is ProbeStatus.CAPTIVE
+    assert result.redirect_url is None
+    assert result.body and "portal" in result.body
+
+
+def test_injected_page_falls_back_to_302_probe():
+    """注入式劫持先记住，继续找 302 形态的探测点——找到就用 302（可解析 OAuth 挑战）。"""
+    s = FakeSession()
+    s.add_url(MIUI, FakeResponse(200, text="<html>injected</html>"))
+    s.add_url(APPLE, FakeResponse(302, headers={"Location": "http://portal/auth?x=1"}))
+    result = probe(s, _cfg())
+    assert result.status is ProbeStatus.CAPTIVE
+    assert result.redirect_url == "http://portal/auth?x=1"
+
+
+def test_injected_page_overrides_later_online():
+    """已见注入式劫持后，后续探测点的 204 在线判定不可信（白名单放行），忽略。"""
+    s = FakeSession()
+    s.add_url(MIUI, FakeResponse(200, text="<html>injected</html>"))
+    s.add_url(APPLE, FakeResponse(204))
+    result = probe(s, _cfg())
+    assert result.status is ProbeStatus.CAPTIVE
+    assert result.redirect_url is None

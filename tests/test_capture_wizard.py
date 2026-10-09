@@ -69,6 +69,16 @@ class FakeCampusHandler(BaseHTTPRequestHandler):
                 self.send_response(204)
                 self.send_header("Content-Length", "0")
                 self.end_headers()
+            elif STATE.get("transparent"):
+                # 注入式劫持形态：探测点直接返回 200 认证页（无 302）
+                form = (
+                    f'<form action="{self.base}/do_login" method="post">'
+                    '<input type="text" name="username">'
+                    '<input type="password" name="password">'
+                    f'<input type="hidden" name="lt" value="{LT_TOKEN}">'
+                    "</form>"
+                )
+                self._page(form)
             else:
                 self._redirect(authorize)
         elif "/auth/oauth/authorize2" in path:
@@ -174,6 +184,34 @@ def test_capture_wizard_rejects_when_online(campus_server, tmp_path, monkeypatch
                      log_file=tmp_path / "logs" / "l.log",
                      lock=tmp_path / "l.lock", pid=tmp_path / "l.pid")
     assert run_capture(cfg, paths) == 2
+
+
+def test_capture_wizard_transparent_mode(campus_server, tmp_path, monkeypatch):
+    """注入式劫持形态：探测点直接返回 200 认证页（无 302），向导仍能完成全流程。"""
+    STATE["transparent"] = True
+    answers = iter(["", ""])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+    monkeypatch.setattr("getpass.getpass", lambda prompt="": PASSWORD)
+    monkeypatch.setattr(sys, "stdin", SimpleNamespace(isatty=lambda: True))
+
+    cfg = make_config(tmp_path)
+    cfg.probe.urls = [f"{campus_server}/generate_204", f"{campus_server}/gen2"]
+    home = tmp_path / "home"
+    paths = AppPaths(home=home, config=home / "config.toml",
+                     credentials=home / "credentials.toml",
+                     session=home / "session.json", log_dir=tmp_path / "logs",
+                     log_file=tmp_path / "logs" / "l.log",
+                     lock=tmp_path / "l.lock", pid=tmp_path / "l.pid")
+
+    rc = run_capture(cfg, paths)
+    assert rc == 0
+    assert (home / "protocol.json").is_file()
+    assert (home / "capture-report.txt").is_file()
+    # 登录后的在线验证走通（服务器状态已被 POST 流程置为 online）
+    report = (home / "capture-report.txt").read_text(encoding="utf-8")
+    assert "登录成功" in report
+    assert "200 注入页" in report
+    assert PASSWORD not in report
 
 
 def test_capture_wizard_wrong_password(campus_server, tmp_path, monkeypatch):

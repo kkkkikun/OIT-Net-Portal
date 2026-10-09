@@ -52,7 +52,11 @@ class PortalChallenge:
     eportal_querystring: str      # login_sso.jsp 的原始查询串（加密 hex 原样透传）
 
     @classmethod
-    def from_redirect(cls, location: str) -> "PortalChallenge":
+    def from_redirect(cls, location: str | None) -> "PortalChallenge":
+        if not location:
+            raise ProtocolMismatch(
+                "探测到劫持但无 302 Location（200 注入式认证页），无法解析 OAuth 挑战"
+            )
         parts = urlsplit(location)
         qs = parse_qs(parts.query)
         try:
