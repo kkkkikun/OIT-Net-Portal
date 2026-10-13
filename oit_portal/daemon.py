@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import signal
+import subprocess
 import sys
 import threading
 import time
@@ -15,7 +16,7 @@ from .auth.flow import AuthFlow, FlowOutcome
 from .config import Config
 from .keepalive import KeepalivePolicy
 from .log import get_logger
-from .paths import AppPaths
+from .paths import AppPaths, is_termux
 from .probe import ProbeStatus
 
 logger = get_logger()
@@ -71,6 +72,56 @@ def _write_pid(path: Path) -> None:
         pass
 
 
+def _read_current_ssid() -> str | None:
+    """Termux 专用：通过 termux-wifi-connectioninfo 读取当前 WiFi SSID。
+
+    需安装 `pkg install termux-api`，并在 Termux:API App 里授权位置/网络。
+    非 Termux / 命令缺失 / 异常时返回 None（feature gate 自动失效）。
+    """
+    if not is_termux():
+        return None
+    try:
+        out = subprocess.run(
+            ["termux-wifi-connectioninfo"],
+            capture_output=True, text=True, timeout=2.0,
+        )
+        if out.returncode != 0:
+            return None
+        # 输出形如 {"ssid": "...", ...} 的 JSON
+        import json
+        info = json.loads(out.stdout)
+        return info.get("ssid")
+    except (FileNotFoundError, subprocess.TimeoutExpired, ValueError, OSError):
+        return None
+
+
+def _wifi_ssid_watcher(cfg: Config, stop: threading.Event,
+                       on_campus_connected: threading.Event) -> None:
+    """后台线程：每 3s 轮询 SSID，匹配配置即触发 burst。
+
+    只在 Termux + 配置了 wifi_ssid 时启用。
+    """
+    target = cfg.probe.wifi_ssid.strip()
+    if not target:
+        return
+    logger.info("WiFi SSID watcher 已启用（目标 SSID=%r）", target)
+    last_seen = False
+    while not stop.is_set():
+        try:
+            ssid = _read_current_ssid()
+        except Exception:  # noqa: BLE001
+            ssid = None
+        now_on_campus = bool(ssid) and (ssid == target)
+        if now_on_campus and not last_seen:
+            logger.info("检测到校园网 SSID=%r，触发 burst 探测", ssid)
+            on_campus_connected.set()
+        last_seen = now_on_campus
+        # 用 stop.wait 替代 sleep（停止信号能 0 秒中断）
+        if stop.wait(3.0):
+            break
+    logger.info("WiFi SSID watcher 退出")
+
+
 def run_daemon(cfg: Config, paths: AppPaths) -> int:
     lock = SingleInstanceLock(paths.lock)
     if not lock.acquire():
@@ -100,6 +151,18 @@ def run_daemon(cfg: Config, paths: AppPaths) -> int:
     flow = AuthFlow(session, cfg, session_path=paths.session)
     policy = KeepalivePolicy(cfg)
 
+    # WiFi SSID watcher 触发 burst（Termux 专用）
+    on_campus = threading.Event()
+    watcher: threading.Thread | None = None
+    if is_termux() and cfg.probe.wifi_ssid.strip():
+        watcher = threading.Thread(
+            target=_wifi_ssid_watcher,
+            args=(cfg, stop, on_campus),
+            name="wifi-ssid-watcher",
+            daemon=True,
+        )
+        watcher.start()
+
     consecutive_failures = 0
     online_since: float | None = None
     last_password_login: float | None = None
@@ -107,6 +170,11 @@ def run_daemon(cfg: Config, paths: AppPaths) -> int:
     last_outcome: FlowOutcome | None = None
 
     while not stop.is_set():
+        # SSID 触发：连接上校园网时立即 mark_recovery 进入 burst
+        if on_campus.is_set():
+            on_campus.clear()
+            policy.mark_recovery()
+
         allow_password = (cfg.password is not None
                           and policy.allow_password(last_password_login))
         try:
@@ -134,8 +202,14 @@ def run_daemon(cfg: Config, paths: AppPaths) -> int:
                                    outcome.value, result.detail)
                 online_since = None
 
-        # 状态迁移与告警日志
+        # 状态迁移 + 网络恢复检测 → 触发 burst 窗口
         if outcome != last_outcome:
+            if (last_outcome is FlowOutcome.NO_NETWORK
+                    and outcome is not FlowOutcome.NO_NETWORK):
+                policy.mark_recovery()
+                logger.info("网络恢复，开启 burst 探测窗口（%ds，每 %ds 探一次）",
+                            cfg.probe.recovery_burst_sec,
+                            cfg.probe.recovery_burst_interval_sec)
             level = logger.info
             if consecutive_failures >= cfg.retry.max_attempts:
                 level = logger.error
@@ -188,7 +262,6 @@ def stop_daemon(paths: AppPaths) -> int:
         return 1
     try:
         if sys.platform == "win32":
-            import subprocess
             subprocess.run(["taskkill", "/PID", str(pid)], check=False,
                            capture_output=True)
         else:

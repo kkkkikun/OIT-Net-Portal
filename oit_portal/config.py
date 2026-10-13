@@ -33,8 +33,11 @@ class ProbeConfig:
     urls: list[str] = field(default_factory=lambda: list(DEFAULT_PROBE_URLS))
     online_interval_sec: int = 60        # 稳定在线时的巡检间隔
     post_online_interval_sec: int = 15   # 上线后短窗内的密集复查
-    post_online_window_sec: int = 300    # 「刚上线」窗口时长
-    offline_interval_sec: int = 30       # 无网络时仅探测的间隔
+    post_online_window_sec: int = 300
+    offline_interval_sec: int = 30        # 无网络时仅探测的间隔
+    recovery_burst_sec: int = 60          # 网络恢复后 burst 探测窗口
+    recovery_burst_interval_sec: int = 5  # burst 期间探测间隔
+    wifi_ssid: str = ""                   # 校园网 SSID（Termux 专用，触发 burst）
     jitter_ratio: float = 0.2            # 间隔 ±20% 抖动
 
 

@@ -15,6 +15,9 @@ online_interval_sec = 60         # 稳定在线时的巡检间隔
 post_online_interval_sec = 15    # 刚上线 5 分钟内的密集复查间隔
 post_online_window_sec = 300
 offline_interval_sec = 30        # 无网络时仅探测的间隔
+recovery_burst_sec = 60          # 网络恢复后 burst 探测窗口
+recovery_burst_interval_sec = 5  # burst 期间探测间隔（5s 探一次）
+wifi_ssid = ""                   # 校园网 SSID（Termux 专用，触发 burst；空 = 关闭）
 jitter_ratio = 0.2               # 间隔 ±20% 随机抖动
 
 [retry]

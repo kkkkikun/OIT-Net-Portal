@@ -39,6 +39,24 @@ oit-portal stop          # 停止
 - **锁屏过夜**：wake-lock 保证 CPU 不冻结；若仍被系统冻结，检查电池豁免是否生效
 - 日志：`~/.config/oit-portal/logs/oit-portal.log`
 
+## 加速校园网识别（可选）
+
+`config.toml` 的 `[probe]` 段有两个改进：
+
+```toml
+[probe]
+offline_interval_sec = 30          # 无网络时探测间隔（默认 30s）
+recovery_burst_sec = 60            # 网络恢复后 burst 探测窗口
+recovery_burst_interval_sec = 5    # burst 期间探测间隔（5s）
+wifi_ssid = "eduroam"              # 校园网 SSID（触发 burst；空=关闭）
+```
+
+效果：
+- 默认：OFFLINE → 等 30s → 探 → CAPTIVE → 登录
+- 改进后：连上校园网 → 3s 内识别 SSID → **立即 5s 探一次** → 60s 内完成登录
+
+要 SSID 触发生效，手机 Termux 需装 `pkg install termux-api`，并在 Termux:API App 里授权位置/网络（不授权只是 `wifi_ssid` 失效，其它功能正常）。
+
 ## 常见问题
 
 | 现象 | 处理 |
