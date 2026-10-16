@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1d4ed8"/>
+      <stop offset="1" stop-color="#0891b2"/>
+    </linearGradient>
+    <linearGradient id="arc" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.95"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0.75"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 背景 -->
+  <rect width="1280" height="640" fill="url(#bg)"/>
+
+  <!-- 装饰：右上角半透明大圆环与 WiFi 弧 -->
+  <circle cx="1150" cy="90" r="230" fill="none" stroke="#ffffff" stroke-opacity="0.10" stroke-width="46"/>
+  <circle cx="1150" cy="90" r="150" fill="none" stroke="#ffffff" stroke-opacity="0.08" stroke-width="30"/>
+  <path d="M-40 620 A280 280 0 0 1 520 620" fill="none" stroke="#ffffff" stroke-opacity="0.08" stroke-width="40"/>
+
+  <!-- Logo（与 assets/logo.svg 同图形，缩放到 300px） -->
+  <g transform="translate(110,170) scale(0.625)">
+    <rect x="16" y="16" width="480" height="480" rx="108" fill="#ffffff" fill-opacity="0.14"/>
+    <path d="M172 142 A120 120 0 0 1 340 142" fill="none" stroke="url(#arc)"
+          stroke-width="24" stroke-linecap="round"/>
+    <path d="M208 176 A68 68 0 0 1 304 176" fill="none" stroke="url(#arc)"
+          stroke-width="24" stroke-linecap="round"/>
+    <circle cx="256" cy="306" r="98" fill="none" stroke="#ffffff" stroke-width="28"/>
+    <polyline points="218,308 246,336 300,278" fill="none" stroke="#ffffff"
+              stroke-width="26" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+
+  <!-- 标题与说明 -->
+  <text x="500" y="290" font-family="DejaVu Sans, sans-serif" font-weight="bold"
+        font-size="86" fill="#ffffff" letter-spacing="1">OIT-Net-Portal</text>
+  <text x="503" y="368" font-family="WenQuanYi Micro Hei, Droid Sans Fallback, sans-serif"
+        font-size="42" fill="#ffffff" fill-opacity="0.92">校园网静默自动登录 + 保持登录态</text>
+  <text x="503" y="432" font-family="WenQuanYi Micro Hei, Droid Sans Fallback, sans-serif"
+        font-size="27" fill="#ffffff" fill-opacity="0.65">鄂尔多斯应用技术学院 · 协议抓包自配置 · 单代码库三端共用</text>
+
+  <!-- 平台标签 -->
+  <g font-family="DejaVu Sans, sans-serif" font-size="24" fill="#ffffff">
+    <rect x="503" y="480" width="150" height="52" rx="26" fill="#ffffff" fill-opacity="0.16"/>
+    <text x="578" y="514" text-anchor="middle" fill-opacity="0.95">Windows</text>
+    <rect x="671" y="480" width="230" height="52" rx="26" fill="#ffffff" fill-opacity="0.16"/>
+    <text x="786" y="514" text-anchor="middle" fill-opacity="0.95">Android Termux</text>
+    <rect x="919" y="480" width="210" height="52" rx="26" fill="#ffffff" fill-opacity="0.16"/>
+    <text x="1024" y="514" text-anchor="middle" fill-opacity="0.95">Linux systemd</text>
+  </g>
+</svg>
