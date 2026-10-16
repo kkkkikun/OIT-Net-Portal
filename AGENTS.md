@@ -1,6 +1,6 @@
 # AGENTS.md — OIT-Net-Portal
 
-校园网（鄂尔多斯应用技术学院）静默自动登录 + 保活工具。Python 3.9+，单代码库双端共用（Windows 计划任务 / Android Termux）。
+校园网（鄂尔多斯应用技术学院）静默自动登录 + 保活工具。Python 3.9+，单代码库三端共用（Windows 计划任务 / Android Termux / Linux systemd）。
 
 ## 仓库结构
 
@@ -19,14 +19,18 @@
 | `oit_portal/daemon.py` | 常驻守护循环（探活 + 保活 + 退避） |
 | `oit_portal/keepalive.py` | 心跳 |
 | `oit_portal/htmlutil.py` | HTML/内联 JS 解析（找 AES key、表单字段、接口候选） |
-| `oit_portal/platform/{windows,termux}.py` | 双端启动/守护细节 |
+| `oit_portal/platform/{windows,termux}.py` | 平台启动/守护细节（notify/wake_lock 为预留死代码，未被调用；Linux 不需要 platform/linux.py） |
 | `oit_portal/paths.py` | 跨平台路径解析（APPDATA / XDG / 便携模式 / `OIT_PORTAL_HOME`） |
 | `oit_portal/log.py` | 日志：旋转文件 + 控制台；**永不记录明文密码与完整 cookie**（只用 `fingerprint()` 记 4 位） |
-| `tests/` | 85 个用例（无网络）。`FakeSession` + 多种 fixture 状态机 |
+| `tests/` | 114 个用例（无网络）。`FakeSession` + 多种 fixture 状态机 |
 | `scripts/install_windows.ps1` | Windows 一键装（注册计划任务 + 启动） |
 | `scripts/install_termux.sh` | Termux 一键装 + 电池豁免 |
+| `scripts/install_linux.sh` | Linux 一键装（pip --user + systemd 系统服务，拒绝 root 直跑） |
+| `scripts/uninstall_linux.sh` | Linux 卸载（`--purge` 删配置） |
+| `scripts/oit-portal.service.template` | systemd unit 模板（@USER@/@EXEC_START@/@HOME@ 占位符，禁加 PrivateTmp/ProtectHome） |
 | `docs/protocol-notes.md` | 协议确认记录（待确认 / 已确认），协议变更先查这里 |
 | `docs/capture-guide.md` | 抓包向导使用说明（用户文档） |
+| `docs/linux-setup.md` | Linux 部署文档（systemd 服务、WiFi SSID 触发、故障排查） |
 
 ## 常用命令
 
@@ -37,7 +41,7 @@ oit-portal status                      # 探测三态
 oit-portal once                        # 完整跑一次登录流程（退出码 0/1/2/3 见 cli.py）
 oit-portal daemon                      # 守护循环
 oit-portal stop                         # 停 daemon
-python -m pytest                       # 跑全部 85 个用例（无网络）
+python -m pytest                       # 跑全部 114 个用例（无网络）
 ```
 
 依赖：`requests`、`pycryptodome`（AES-128-CBC 复现，缺失时 `sso.py` 优雅降级）、`tomli`（仅 <3.11）。
@@ -126,11 +130,13 @@ python -m pytest                       # 跑全部 85 个用例（无网络）
 - **`once` 子命令需要密码才能用**——`allow_password=cfg.password is not None`，免密场景下走 `session.json` 复用。
 - **测试 jitter**：`make_config` 强制 `jitter_ratio = 0.0`，断言精确时间值。
 - **`Session.trust_env = False`**——加新 session 别忘了，否则代理环境会失真。
+- **Termux 的 `sys.platform` 也是 `"linux"`**——Linux 分支必须 `sys.platform == "linux" and not is_termux()`（`daemon._is_linux()` 已封装）。
+- **单实例锁冲突退出码是 0 不是 1**——systemd `Restart=on-failure` 下返回 1 会被当崩溃无限重启；「已有实例在跑」= 目标已达成（见 `daemon.run_daemon` 注释）。
 
 ## 改这些敏感区域前必读
 
 - 协议字段 → `docs/protocol-notes.md`（当前已确认项 + 待确认标签编号）
 - 抓包向导逻辑 → `docs/capture-guide.md`（用户体验）+ `tests/test_capture_wizard.py`（回归用例）
 - 入口跳转逻辑 → `tests/test_discover.py`（302/meta/JS 三跳路径）
-- 跨平台路径/守护 → `docs/windows-setup.md` + `docs/termux-setup.md` + `scripts/install_*.{ps1,sh}`
+- 跨平台路径/守护 → `docs/windows-setup.md` + `docs/termux-setup.md` + `docs/linux-setup.md` + `scripts/install_*.{ps1,sh}`
 - 表单 action / hidden 字段识别 → `tests/test_htmlutil.py::test_form_action_sentinel_for_no_action` + `tests/test_discover.py::test_analyze_form_form_without_action_defaults_to_page_url`

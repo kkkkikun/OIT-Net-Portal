@@ -4,7 +4,8 @@
 
 - **Windows**：计划任务自启 + 后台守护，断网自动重连
 - **安卓**：Termux + Termux:Boot，开机/联网自动登录
-- 单 Python 代码库双端共用；探测 → SSO OAuth 免密/账密 → 锐捷 ePortal 上线 → 轮询保活
+- **Linux**：systemd 系统服务，开机自启 + 崩溃自动重启（Jetson Nano / Ubuntu 22.04 实测目标）
+- 单 Python 代码库三端共用；探测 → SSO OAuth 免密/账密 → 锐捷 ePortal 上线 → 轮询保活
 
 ```
 探测(generate_204) ──在线──► 巡逻等待(60s±20%)
@@ -19,8 +20,8 @@
 | 阶段 0 协议抓取（**需要你完成**） | 🔶 一键向导 `oit-portal capture`（校内未登录状态运行，约 2 分钟，[指南](docs/capture-guide.md)）；已知：无验证码 ✅、cookie 可复用（>5h，次日失效）✅；可识别 Vue SPA / 注入式认证页 / form 无 action / jQuery $.zytec.* / widget 控制器 / 等多种模式 |
 | 阶段 1 核心 CLI（status / once） | ✅ 已实现（用户学校实测可登录） |
 | 阶段 2 守护与保活（daemon / stop） | ✅ 已实现 |
-| 阶段 3 双端部署脚本与文档 | ✅ 已实现（Windows 侧脚本待实机验证） |
-| 单元测试（85 用例，无网络依赖） | ✅ 全绿 `python -m pytest` |
+| 阶段 3 三端部署脚本与文档 | ✅ 已实现（Windows 侧脚本待实机验证） |
+| 单元测试（114 用例，无网络依赖） | ✅ 全绿 `python -m pytest` |
 
 > **重要**：登录协议细节（SSO 表单端点、密码加密方式、ePortal 上线方式等）由
 > `oit-portal capture` 向导自动发现并写入 `protocol.json`（无则回退到
@@ -35,7 +36,7 @@
 ```bash
 pip install -e .
 oit-portal status    # online / captive / offline
-python -m pytest     # 85 个用例
+python -m pytest     # 114 个用例
 ```
 
 ### Windows
@@ -45,6 +46,10 @@ python -m pytest     # 85 个用例
 ### 安卓 Termux
 
 见 [docs/termux-setup.md](docs/termux-setup.md)：`bash scripts/install_termux.sh` 一键装 + 两步必做的电池豁免设置。
+
+### Linux（systemd）
+
+见 [docs/linux-setup.md](docs/linux-setup.md)：`bash scripts/install_linux.sh` 一键装（以目标用户运行；装包/配置免 sudo，写 systemd unit 时自动 sudo）。开机自启 + 崩溃自愈，WiFi SSID 可选加速。
 
 ## 命令
 

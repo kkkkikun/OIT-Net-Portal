@@ -1,5 +1,5 @@
 # OIT 校园网自动登录配置模板
-# 复制到对应位置后修改（Windows: %APPDATA%\oit-portal\config.toml；Termux: ~/.config/oit-portal/config.toml）
+# 复制到对应位置后修改（Windows: %APPDATA%\oit-portal\config.toml；Termux/Linux: ~/.config/oit-portal/config.toml）
 # 账号写这里；密码不写在这里，放同目录 credentials.toml（chmod 600）或环境变量 OIT_PORTAL_PASSWORD
 
 [account]
@@ -17,7 +17,7 @@ post_online_window_sec = 300
 offline_interval_sec = 30        # 无网络时仅探测的间隔
 recovery_burst_sec = 60          # 网络恢复后 burst 探测窗口
 recovery_burst_interval_sec = 5  # burst 期间探测间隔（5s 探一次）
-wifi_ssid = ""                   # 校园网 SSID（Termux 专用，触发 burst；空 = 关闭）
+wifi_ssid = ""                   # 校园网 SSID（Termux/Linux 专用，触发 burst；空 = 关闭）
 jitter_ratio = 0.2               # 间隔 ±20% 随机抖动
 
 [retry]

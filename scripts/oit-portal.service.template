@@ -1,0 +1,19 @@
+[Unit]
+Description=OIT campus network auto-login daemon (oit-portal)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=@USER@
+# ExecStart 必须是绝对路径：systemd 无用户 PATH（install 脚本负责解析）
+ExecStart=@EXEC_START@ daemon
+Restart=on-failure
+RestartSec=5
+# 不要加 PrivateTmp/ProtectHome——锁与 pid 文件在 /tmp，配置/日志在 ~/.config，
+# 沙箱化会让 `oit-portal stop` 和日志写入失效。
+WorkingDirectory=@HOME@
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

@@ -73,13 +73,32 @@ def _write_pid(path: Path) -> None:
 
 
 def _read_current_ssid() -> str | None:
-    """Termux 专用：通过 termux-wifi-connectioninfo 读取当前 WiFi SSID。
+    """读取当前 WiFi SSID。平台链：Termux → Linux(nmcli/iwgetid)。
 
-    需安装 `pkg install termux-api`，并在 Termux:API App 里授权位置/网络。
-    非 Termux / 命令缺失 / 异常时返回 None（feature gate 自动失效）。
+    需安装对应工具（termux-api / NetworkManager / wireless-tools）。
+    命令缺失 / 异常时返回 None（feature gate 自动失效）。
     """
-    if not is_termux():
-        return None
+    if is_termux():
+        return _read_ssid_termux()
+    if _is_linux():
+        return _read_ssid_linux()
+    return None
+
+
+def _is_linux() -> bool:
+    """真 Linux（桌面/服务器，systemd 守护场景）。
+
+    Termux 的 sys.platform 也是 "linux"，必须排除。
+    """
+    return sys.platform == "linux" and not is_termux()
+
+
+def _ssid_probe_supported() -> bool:
+    return is_termux() or _is_linux()
+
+
+def _read_ssid_termux() -> str | None:
+    """Termux：termux-wifi-connectioninfo 输出 JSON，提取 ssid 字段。"""
     try:
         out = subprocess.run(
             ["termux-wifi-connectioninfo"],
@@ -95,11 +114,38 @@ def _read_current_ssid() -> str | None:
         return None
 
 
+def _read_ssid_linux() -> str | None:
+    """Linux：nmcli（NetworkManager）优先，iwgetid（wireless-tools）兜底。
+
+    均无 / 失败时返回 None。systemd 服务下 nmcli 走 system bus 通常可用。
+    """
+    try:
+        out = subprocess.run(
+            ["nmcli", "-t", "-f", "ACTIVE,SSID", "dev", "wifi"],
+            capture_output=True, text=True, timeout=2.0,
+        )
+        if out.returncode == 0:
+            for line in out.stdout.splitlines():
+                active, _, ssid = line.partition(":")
+                if active == "yes" and ssid:
+                    return ssid
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        pass
+    try:
+        out = subprocess.run(["iwgetid", "-r"],
+                             capture_output=True, text=True, timeout=2.0)
+        if out.returncode == 0 and out.stdout.strip():
+            return out.stdout.strip()
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        pass
+    return None
+
+
 def _wifi_ssid_watcher(cfg: Config, stop: threading.Event,
                        on_campus_connected: threading.Event) -> None:
     """后台线程：每 3s 轮询 SSID，匹配配置即触发 burst。
 
-    只在 Termux + 配置了 wifi_ssid 时启用。
+    只在 Termux / Linux + 配置了 wifi_ssid 时启用。
     """
     target = cfg.probe.wifi_ssid.strip()
     if not target:
@@ -125,8 +171,11 @@ def _wifi_ssid_watcher(cfg: Config, stop: threading.Event,
 def run_daemon(cfg: Config, paths: AppPaths) -> int:
     lock = SingleInstanceLock(paths.lock)
     if not lock.acquire():
+        # 返回 0 而非 1：systemd Restart=on-failure 下退出码 1 会被当
+        # 崩溃无限重启；「已有实例在跑」对服务管理器而言目标已达成。
+        # 副作用：手动跑第二个 `oit-portal daemon` 的退出码从 1 变 0（见文档）。
         logger.error("已有 oit-portal 实例在运行（锁 %s），退出", paths.lock)
-        return 1
+        return 0
     _write_pid(paths.pid)
     logger.info("daemon 启动（pid=%s，配置=%s）", os.getpid(), paths.config)
 
@@ -151,10 +200,10 @@ def run_daemon(cfg: Config, paths: AppPaths) -> int:
     flow = AuthFlow(session, cfg, session_path=paths.session)
     policy = KeepalivePolicy(cfg)
 
-    # WiFi SSID watcher 触发 burst（Termux 专用）
+    # WiFi SSID watcher 触发 burst（Termux / Linux）
     on_campus = threading.Event()
     watcher: threading.Thread | None = None
-    if is_termux() and cfg.probe.wifi_ssid.strip():
+    if _ssid_probe_supported() and cfg.probe.wifi_ssid.strip():
         watcher = threading.Thread(
             target=_wifi_ssid_watcher,
             args=(cfg, stop, on_campus),
