@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.svg" width="160" alt="OIT-Net-Portal logo">
+</p>
+
 # OIT-Net-Portal
 
 鄂尔多斯应用技术学院校园网**静默自动登录 + 保持登录态**工具。
