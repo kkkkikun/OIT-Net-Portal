@@ -5,6 +5,10 @@ build/
 dist/
 .pytest_cache/
 
+# Android / Gradle 本机状态
+.gradle/
+local.properties
+
 # 敏感文件永不入库
 config.toml
 credentials.toml

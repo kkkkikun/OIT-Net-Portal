@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">OIT Net Portal</string>
+    <string name="notification_channel_name">校园网守护</string>
+    <string name="notification_channel_description">显示校园网自动重连服务状态</string>
+    <string name="notification_title">OIT 校园网守护</string>
+    <string name="notification_waiting_for_core">服务骨架已启动，Python 核心尚未接入</string>
+</resources>
