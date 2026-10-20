@@ -6,7 +6,9 @@ import pytest
 import requests
 
 from oit_portal.auth.flow import FlowOutcome, FlowResult
-from oit_portal.mobile_bridge import MobileProbeBridge, probe_status
+from oit_portal.config import DEFAULT_PROBE_URLS
+from oit_portal.mobile_bridge import (MobileProbeBridge, create_mobile_bridge,
+                                      probe_status)
 
 from conftest import FakeResponse, FakeSession, make_config
 
@@ -285,3 +287,116 @@ def test_login_once_uses_owned_session_and_closes_it(monkeypatch):
     assert calls[0]["session"] is session
     assert session.trust_env is False
     assert session.close_count == 1
+
+
+def test_create_mobile_bridge_builds_in_memory_config(monkeypatch):
+    monkeypatch.setenv("OIT_PORTAL_USERNAME", "unexpected-env-user")
+    monkeypatch.setenv("OIT_PORTAL_PASSWORD", "unexpected-env-password")
+
+    bridge = create_mobile_bridge(
+        username="factory-user",
+        password="factory-password",
+        session=FakeSession(),
+    )
+
+    cfg = bridge._cfg
+    assert cfg.username == "factory-user"
+    assert cfg.password == "factory-password"
+    assert cfg.config_path is None
+    assert cfg.credentials_path is None
+    assert cfg.probe.urls == DEFAULT_PROBE_URLS
+    assert cfg.probe.urls is not DEFAULT_PROBE_URLS
+
+
+def test_create_mobile_bridge_copies_probe_urls():
+    urls = [MIUI, APPLE]
+    bridge = create_mobile_bridge("user", "password", probe_urls=urls,
+                                  session=FakeSession())
+
+    urls.append("http://changed.example/probe")
+
+    assert bridge._cfg.probe.urls == [MIUI, APPLE]
+
+
+@pytest.mark.parametrize(
+    ("username", "password"),
+    [
+        (None, "password"),
+        ("", "password"),
+        ("   ", "password"),
+        ("user", None),
+        ("user", ""),
+        ("user", "   "),
+    ],
+)
+def test_create_mobile_bridge_rejects_invalid_credentials_safely(username, password):
+    with pytest.raises(ValueError, match="账号或密码参数无效") as exc_info:
+        create_mobile_bridge(username, password, session=FakeSession())
+
+    assert str(exc_info.value) == "账号或密码参数无效"
+
+
+@pytest.mark.parametrize(
+    "probe_urls",
+    [
+        [],
+        ["http://valid.example/probe", "   "],
+        ["http://valid.example/probe", 42],
+        "http://valid.example/probe",
+    ],
+)
+def test_create_mobile_bridge_rejects_invalid_probe_urls_safely(probe_urls):
+    with pytest.raises(ValueError, match="探测地址参数无效") as exc_info:
+        create_mobile_bridge("user", "password", probe_urls=probe_urls,
+                             session=FakeSession())
+
+    assert str(exc_info.value) == "探测地址参数无效"
+
+
+def test_create_mobile_bridge_owns_and_closes_created_session(monkeypatch):
+    created = []
+
+    def make_session():
+        session = ClosableFakeSession()
+        created.append(session)
+        return session
+
+    monkeypatch.setattr("oit_portal.mobile_bridge.requests.Session", make_session)
+
+    bridge = create_mobile_bridge("user", "password")
+    bridge.close()
+    bridge.close()
+
+    session = created[0]
+    assert session.trust_env is False
+    assert session.close_count == 1
+
+
+def test_create_mobile_bridge_preserves_injected_session_ownership():
+    session = ClosableFakeSession()
+    session.add_url(MIUI, FakeResponse(204))
+    session.add_url(APPLE, FakeResponse(204))
+
+    bridge = create_mobile_bridge("user", "password", probe_urls=[MIUI, APPLE],
+                                  session=session)
+    result = bridge.probe()
+    bridge.close()
+
+    assert result == {"status": "ONLINE", "hint": "网络已连接"}
+    assert session.trust_env is True
+    assert session.close_count == 0
+
+
+def test_create_mobile_bridge_reuses_login_once(monkeypatch):
+    session = ClosableFakeSession()
+    calls = _install_auth_flow(monkeypatch, FlowResult(FlowOutcome.NEED_CREDENTIALS))
+    bridge = create_mobile_bridge("user", "password", session=session)
+
+    result = bridge.login_once(allow_password=False)
+    bridge.close()
+
+    assert result == {"outcome": "NEED_CREDENTIALS", "hint": "需要更新账号或密码"}
+    assert calls[0]["cfg"].username == "user"
+    assert calls[0]["allow_password"] is False
+    assert calls[0]["kwargs"]["session_path"] is None
+    assert session.close_count == 0

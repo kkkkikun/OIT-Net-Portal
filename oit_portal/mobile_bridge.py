@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 import requests
 
 from .auth.flow import AuthFlow, FlowOutcome
@@ -103,4 +105,41 @@ def probe_status(cfg: Config, session: requests.Session | None = None) -> dict[s
         return bridge.probe()
 
 
-__all__ = ["MobileProbeBridge", "probe_status"]
+def create_mobile_bridge(username: str, password: str, *,
+                         probe_urls: Iterable[str] | None = None,
+                         session: requests.Session | None = None) -> MobileProbeBridge:
+    """用基础参数创建内存配置的移动桥接，不读取外部配置文件或环境变量。"""
+    cfg = Config(username=_require_credential(username),
+                 password=_require_credential(password))
+    urls = _copy_probe_urls(probe_urls)
+    if urls is not None:
+        cfg.probe.urls = urls
+    return MobileProbeBridge(cfg, session=session)
+
+
+def _require_credential(value: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("账号或密码参数无效")
+    return value
+
+
+def _copy_probe_urls(probe_urls: Iterable[str] | None) -> list[str] | None:
+    if probe_urls is None:
+        return None
+    if isinstance(probe_urls, (str, bytes)):
+        raise ValueError("探测地址参数无效")
+    try:
+        urls = list(probe_urls)
+    except TypeError as exc:
+        raise ValueError("探测地址参数无效") from exc
+    if not urls:
+        raise ValueError("探测地址参数无效")
+    cleaned = []
+    for url in urls:
+        if not isinstance(url, str) or not url.strip():
+            raise ValueError("探测地址参数无效")
+        cleaned.append(url.strip())
+    return cleaned
+
+
+__all__ = ["MobileProbeBridge", "create_mobile_bridge", "probe_status"]
