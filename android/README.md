@@ -10,13 +10,14 @@
 - 桥接创建成功后，ViewModel 才更新 `coreAvailable`；「重试登录」和「刷新状态」仅在核心可用且非忙碌时启用。
 - Python 返回值在 Kotlin 侧按白名单映射，不透传原始详情、异常、URL 或会话内容。
 - Python `requests.Session` 由 `MobileProbeBridge.close()` 显式释放；Kotlin 侧先调用 Python `close()`，再释放 Chaquopy 引用。
+- Network Security Config 默认禁止明文 HTTP，仅对当前源码确认的固定探测域名、SSO 域名和 ePortal IP 设置最小范围例外。
 
 ## 明确未接通
 
 - Capture、设置、日志查看和后台自动重连仍未实现；自动重连开关保持禁用。
 - 前台 Service 仍未接管认证流程，也没有运行时通知权限和网络恢复回调接线。
 - 凭据安全存储仍未实现；当前每次手动登录都需要用户输入。
-- 校园网明文 HTTP 的 Android 网络安全策略尚未配置。
+- Chaquopy `requests` 是否遵守 Android 平台明文限制、动态门户跳转目标和 IP 字面量例外仍需运行时验证。
 - Gradle Wrapper 尚未生成。
 
 ## 尚未验证
