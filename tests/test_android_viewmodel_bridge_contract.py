@@ -21,6 +21,11 @@ def _cleared_body() -> str:
     return VIEW_MODEL_SOURCE.split("override fun onCleared()", maxsplit=1)[1]
 
 
+def _apply_result_body() -> str:
+    return VIEW_MODEL_SOURCE.split("private fun applyLoginResult", maxsplit=1)[1].split(
+        "private suspend fun releaseCore", maxsplit=1)[0]
+
+
 def test_viewmodel_accepts_replaceable_core_and_injectable_factory():
     assert "private var core: PortalCoreBridge" in VIEW_MODEL_SOURCE
     assert "bridgeFactory" in VIEW_MODEL_SOURCE
@@ -93,3 +98,24 @@ def test_viewmodel_cleanup_shares_operation_mutex_and_uses_independent_scope():
     assert "releaseCore(finalCore)" in body
     assert "viewModelScope.launch" not in body
     assert "runBlocking" not in VIEW_MODEL_SOURCE
+
+
+def test_failed_login_never_preserves_previous_online_state():
+    body = _apply_result_body()
+    assert "LoginOutcome.ALREADY_ONLINE, LoginOutcome.LOGGED_IN -> PortalStatus.ONLINE" in body
+    assert "LoginOutcome.NO_NETWORK -> PortalStatus.OFFLINE" in body
+    assert "LoginOutcome.NEED_CREDENTIALS -> PortalStatus.CAPTIVE" in body
+    assert "LoginOutcome.CAPTCHA_REQUIRED -> PortalStatus.CAPTIVE" in body
+    assert "LoginOutcome.LOGIN_REJECTED -> PortalStatus.CAPTIVE" in body
+    assert "LoginOutcome.FAILED -> PortalStatus.UNKNOWN" in body
+    assert "else -> it.status" not in body
+
+
+def test_adopting_new_credentials_resets_status_until_verified():
+    body = _login_body()
+    replacement = "core = createdCore"
+    reset = "status = PortalStatus.UNKNOWN"
+    assert replacement in body
+    assert reset in body
+    assert body.index(replacement) < body.index(reset)
+    assert "正在验证校园网登录状态" in body

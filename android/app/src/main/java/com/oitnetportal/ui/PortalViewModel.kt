@@ -101,7 +101,9 @@ class PortalViewModel(
                         _uiState.update {
                             it.copy(
                                 coreAvailable = true,
-                                statusDetail = "Python 核心已连接",
+                                status = PortalStatus.UNKNOWN,
+                                statusDetail = "正在验证校园网登录状态",
+                                notice = null,
                             )
                         }
                     }
@@ -125,7 +127,10 @@ class PortalViewModel(
                 status = when (result.outcome) {
                     LoginOutcome.ALREADY_ONLINE, LoginOutcome.LOGGED_IN -> PortalStatus.ONLINE
                     LoginOutcome.NO_NETWORK -> PortalStatus.OFFLINE
-                    else -> it.status
+                    LoginOutcome.NEED_CREDENTIALS -> PortalStatus.CAPTIVE
+                    LoginOutcome.CAPTCHA_REQUIRED -> PortalStatus.CAPTIVE
+                    LoginOutcome.LOGIN_REJECTED -> PortalStatus.CAPTIVE
+                    LoginOutcome.FAILED -> PortalStatus.UNKNOWN
                 },
                 statusDetail = result.detail.ifBlank { "登录流程已结束" },
                 notice = when (result.outcome) {
