@@ -52,6 +52,10 @@ class MobileSsoAdapter(SsoAdapter):
     def __init__(self, session: requests.Session, cfg: Config):
         super().__init__(session, cfg, apply_protocol_overrides=False)
 
+    @staticmethod
+    def _absolutize(base: str, location: str) -> str:
+        return urljoin(base, location)
+
     def login_password(self, challenge: PortalChallenge,
                        username: str, password: str) -> AuthCode:
         resp, code_location = self._follow(challenge.authorize_url)
@@ -60,6 +64,7 @@ class MobileSsoAdapter(SsoAdapter):
                             obtained_via="session_reuse")
 
         page_url = resp.url or challenge.authorize_url
+        _require_same_origin(page_url, challenge.authorize_url)
         html = resp.text[:_MAX_FORM_BYTES]
         parsed_form = _parse_form(html, page_url, challenge.authorize_url)
         form = dict(parsed_form.hidden_fields)
@@ -80,7 +85,11 @@ class MobileSsoAdapter(SsoAdapter):
             location = post.headers.get("Location", "")
             if not location:
                 raise ProtocolMismatch("登录响应 30x 但无 Location")
-            final, code_location = self._follow(self._absolutize(page_url, location))
+            target = self._absolutize(parsed_form.endpoint, location)
+            direct_code = self._extract_code(target)
+            if direct_code:
+                return AuthCode(code=direct_code, obtained_via="password")
+            final, code_location = self._follow(target)
         body = final.text[:4096]
         for marker in _REJECT_MARKERS:
             if marker in body:

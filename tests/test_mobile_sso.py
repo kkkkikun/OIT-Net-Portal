@@ -65,7 +65,8 @@ def _aes_script(options: str, *, key_source=AES_SOURCE, iv_source=AES_SOURCE) ->
     )
 
 
-def _session_for_form(html: str, *, post_url=AUTHORIZE_URL):
+def _session_for_form(html: str, *, post_url=AUTHORIZE_URL,
+                      post_location=AUTHORIZE_URL):
     session = FakeSession()
     session.add_url(
         MIUI,
@@ -74,7 +75,7 @@ def _session_for_form(html: str, *, post_url=AUTHORIZE_URL):
     )
     session.add_url(APPLE, FakeResponse(204))
     session.add(lambda url, method: method == "POST" and url == post_url,
-                FakeResponse(302, headers={"Location": AUTHORIZE_URL}))
+                FakeResponse(302, headers={"Location": post_location}))
     session.add(lambda url, method: method == "GET" and url == AUTHORIZE_URL,
                 FakeResponse(200, text=html, url=AUTHORIZE_URL),
                 FakeResponse(200, text=html, url=AUTHORIZE_URL),
@@ -138,6 +139,105 @@ def test_mobile_relative_action_uses_standard_url_resolution(monkeypatch):
 
     assert result["outcome"] == "LOGGED_IN"
     assert session.posts[0][0] == expected
+
+
+def test_mobile_post_location_code_is_returned_before_following():
+    session = _session_for_form(_form_html(), post_location=EPORTAL_CODE_URL)
+    adapter = MobileSsoAdapter(session, _cfg())
+    challenge = PortalChallenge.from_redirect(AUTHORIZE_URL)
+
+    assert adapter.try_session(challenge) is None
+    auth = adapter.login_password(challenge, "20230001", "secret-pass")
+
+    assert auth.code == "CODE123"
+
+
+def test_mobile_post_redirect_with_code_preserves_code_without_extra_sso_get(monkeypatch):
+    _block_overrides(monkeypatch)
+    session = _session_for_form(_form_html(), post_location=EPORTAL_CODE_URL)
+
+    result = MobileProbeBridge(_cfg(), session=session).login_once()
+
+    assert result["outcome"] == "LOGGED_IN"
+    assert len(session.posts) == 1
+    post_index = session.calls.index(("POST", AUTHORIZE_URL))
+    assert session.calls[post_index + 1] == ("GET", EPORTAL_CODE_URL)
+
+
+def _session_for_redirect_form(initial_location: str, form_url: str,
+                               post_location: str, intermediate_url: str):
+    session = FakeSession()
+    session.add_url(
+        MIUI,
+        FakeResponse(302, headers={"Location": AUTHORIZE_URL}),
+        FakeResponse(204),
+    )
+    session.add_url(APPLE, FakeResponse(204))
+    session.add(
+        lambda url, method: method == "GET" and url == AUTHORIZE_URL,
+        FakeResponse(302, headers={"Location": initial_location}),
+        FakeResponse(302, headers={"Location": initial_location}),
+    )
+    session.add(lambda url, method: method == "GET" and url == form_url,
+                FakeResponse(200, text=_form_html(), url=form_url))
+    session.add(lambda url, method: method == "POST" and url == form_url,
+                FakeResponse(302, headers={"Location": post_location}))
+    session.add(lambda url, method: method == "GET" and url == intermediate_url,
+                FakeResponse(302, headers={"Location": EPORTAL_CODE_URL}))
+    session.add_url(EPORTAL_CODE_URL, FakeResponse(200, text="认证成功"))
+    return session
+
+
+@pytest.mark.parametrize(
+    ("initial_location", "form_url", "post_location", "intermediate_url"),
+    [
+        (
+            "../pages/login",
+            "http://open.oit.edu.cn:8090/auth/pages/login",
+            "../oauth/intermediate?next=1",
+            "http://open.oit.edu.cn:8090/auth/oauth/intermediate?next=1",
+        ),
+        (
+            "/auth/pages/login?step=1",
+            "http://open.oit.edu.cn:8090/auth/pages/login?step=1",
+            "?next=2",
+            "http://open.oit.edu.cn:8090/auth/pages/login?next=2",
+        ),
+    ],
+)
+def test_mobile_redirects_use_urljoin_and_post_endpoint_base(
+        monkeypatch, initial_location, form_url, post_location, intermediate_url):
+    _block_overrides(monkeypatch)
+    session = _session_for_redirect_form(
+        initial_location, form_url, post_location, intermediate_url)
+
+    result = MobileProbeBridge(_cfg(), session=session).login_once()
+
+    assert result["outcome"] == "LOGGED_IN"
+    assert len(session.posts) == 1
+    assert ("POST", form_url) in session.calls
+    assert ("GET", intermediate_url) in session.calls
+
+
+def test_mobile_redirect_to_untrusted_form_host_never_sends_password(monkeypatch):
+    _block_overrides(monkeypatch)
+    untrusted = "http://untrusted.example/login"
+    session = FakeSession()
+    session.add_url(
+        MIUI,
+        FakeResponse(302, headers={"Location": AUTHORIZE_URL}),
+        FakeResponse(204),
+    )
+    session.add_url(APPLE, FakeResponse(204))
+    session.add(lambda url, method: method == "GET" and url == AUTHORIZE_URL,
+                FakeResponse(302, headers={"Location": untrusted}))
+    session.add(lambda url, method: method == "GET" and url == untrusted,
+                FakeResponse(200, text=_form_html(), url=untrusted))
+
+    result = MobileProbeBridge(_cfg(), session=session).login_once()
+
+    assert result["outcome"] == "FAILED"
+    assert session.posts == []
 
 
 def test_mobile_explicit_ecb_zero_padding_still_uses_encryption(monkeypatch):
