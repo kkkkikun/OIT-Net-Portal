@@ -26,6 +26,11 @@ def _apply_result_body() -> str:
         "private suspend fun releaseCore", maxsplit=1)[0]
 
 
+def _end_session_body() -> str:
+    return VIEW_MODEL_SOURCE.split("fun endLocalSession()", maxsplit=1)[1].split(
+        "private fun applyLoginResult", maxsplit=1)[0]
+
+
 def test_viewmodel_accepts_replaceable_core_and_injectable_factory():
     assert "private var core: PortalCoreBridge" in VIEW_MODEL_SOURCE
     assert "bridgeFactory" in VIEW_MODEL_SOURCE
@@ -119,3 +124,14 @@ def test_adopting_new_credentials_resets_status_until_verified():
     assert reset in body
     assert body.index(replacement) < body.index(reset)
     assert "正在验证校园网登录状态" in body
+
+
+def test_end_local_session_replaces_and_releases_core_safely():
+    body = _end_session_body()
+    assert "runOperation" in body
+    assert "val endingCore = core" in body
+    assert "core = UnavailablePortalCoreBridge()" in body
+    assert "coreAvailable = false" in body
+    assert "status = PortalStatus.UNKNOWN" in body
+    assert "releaseCore(endingCore)" in body
+    assert "disposed = true" not in body

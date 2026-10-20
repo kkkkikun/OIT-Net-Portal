@@ -10,6 +10,7 @@
 - 桥接创建成功后，ViewModel 才更新 `coreAvailable`；「重试登录」和「刷新状态」仅在核心可用且非忙碌时启用。
 - Python 返回值在 Kotlin 侧按白名单映射，不透传原始详情、异常、URL 或会话内容。
 - Python `requests.Session` 由 `MobileProbeBridge.close()` 显式释放；Kotlin 侧先调用 Python `close()`，再释放 Chaquopy 引用。
+- 用户可手动结束应用内 Python 认证会话；该操作不向校园网服务器发送退出请求，也不承诺清除界面中的用户名或实现内存级清零。
 - Network Security Config 默认禁止明文 HTTP，仅对当前源码确认的固定探测域名、SSO 域名和 ePortal IP 设置最小范围例外。
 
 ## 明确未接通

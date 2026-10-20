@@ -121,6 +121,20 @@ class PortalViewModel(
         }
     }
 
+    fun endLocalSession() = runOperation {
+        val endingCore = core
+        core = UnavailablePortalCoreBridge()
+        _uiState.update {
+            it.copy(
+                coreAvailable = false,
+                status = PortalStatus.UNKNOWN,
+                statusDetail = "本地认证会话已结束",
+                notice = "已关闭应用内 Python 会话；不会向校园网服务器发送退出请求。",
+            )
+        }
+        releaseCore(endingCore)
+    }
+
     private fun applyLoginResult(result: LoginResult) {
         _uiState.update {
             it.copy(

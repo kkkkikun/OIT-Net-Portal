@@ -35,6 +35,7 @@ fun PortalApp(viewModel: PortalViewModel) {
             onRefresh = viewModel::refresh,
             onLogin = viewModel::loginOnce,
             onCredentialsSubmit = viewModel::loginWithCredentials,
+            onEndSession = viewModel::endLocalSession,
         )
     }
 }
@@ -45,6 +46,7 @@ fun PortalScreen(
     onRefresh: () -> Unit,
     onLogin: () -> Unit,
     onCredentialsSubmit: (String, String) -> Unit,
+    onEndSession: () -> Unit,
 ) {
     Scaffold { innerPadding ->
         Column(
@@ -94,6 +96,23 @@ fun PortalScreen(
                         modifier = Modifier.weight(1f),
                     ) {
                         Text("刷新状态")
+                    }
+                }
+            }
+
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Text("会话管理", style = MaterialTheme.typography.titleMedium)
+                    Text("结束本次会话只关闭应用内 Python 认证会话，不会向校园网服务器发送退出请求，也不能保证当前校园网连接立刻断开。")
+                    OutlinedButton(
+                        onClick = onEndSession,
+                        enabled = state.coreAvailable && !state.isBusy,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("结束本次会话")
                     }
                 }
             }

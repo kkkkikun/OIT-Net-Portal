@@ -62,3 +62,11 @@ def test_viewmodel_gives_credential_first_prompt_when_factory_exists():
     assert "bridgeFactory == null" in VIEW_MODEL_SOURCE
     assert "Python 核心桥接尚未接入" in VIEW_MODEL_SOURCE
     assert "请先输入校园网账号和密码" in VIEW_MODEL_SOURCE
+
+
+def test_screen_exposes_local_session_close_without_server_logout_claim():
+    assert "onEndSession: () -> Unit" in SCREEN_SOURCE
+    assert "onEndSession = viewModel::endLocalSession" in SCREEN_SOURCE
+    assert 'Text("结束本次会话")' in SCREEN_SOURCE
+    assert "不会向校园网服务器发送退出请求" in SCREEN_SOURCE
+    assert SCREEN_SOURCE.count("state.coreAvailable && !state.isBusy") >= 3
