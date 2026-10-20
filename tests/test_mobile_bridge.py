@@ -1,7 +1,11 @@
 """移动端探测桥接：稳定 dict、敏感字段隔离与 Session 生命周期。"""
 
+from types import SimpleNamespace
+
+import pytest
 import requests
 
+from oit_portal.auth.flow import FlowOutcome, FlowResult
 from oit_portal.mobile_bridge import MobileProbeBridge, probe_status
 
 from conftest import FakeResponse, FakeSession, make_config
@@ -151,3 +155,133 @@ def test_probe_status_convenience_uses_injected_session_without_closing_it():
     assert result["status"] == "ONLINE"
     assert session.close_count == 0
     assert session.calls == [("GET", MIUI), ("GET", APPLE)]
+
+
+def _install_auth_flow(monkeypatch, result):
+    calls = []
+
+    class FakeAuthFlow:
+        def __init__(self, session, cfg, **kwargs):
+            calls.append({
+                "session": session,
+                "cfg": cfg,
+                "kwargs": kwargs,
+            })
+
+        def ensure_online(self, *, allow_password):
+            calls[0]["allow_password"] = allow_password
+            if isinstance(result, BaseException):
+                raise result
+            return result
+
+    monkeypatch.setattr("oit_portal.mobile_bridge.AuthFlow", FakeAuthFlow)
+    return calls
+
+
+@pytest.mark.parametrize(
+    ("flow_outcome", "expected"),
+    [
+        (FlowOutcome.ALREADY_ONLINE, ("ALREADY_ONLINE", "网络已在线")),
+        (FlowOutcome.LOGGED_IN, ("LOGGED_IN", "登录成功")),
+        (FlowOutcome.NO_NETWORK, ("NO_NETWORK", "当前无可用网络")),
+        (FlowOutcome.NEED_CREDENTIALS, ("NEED_CREDENTIALS", "需要更新账号或密码")),
+        (FlowOutcome.CAPTCHA_REQUIRED, ("CAPTCHA_REQUIRED", "需要人工完成验证码")),
+        (FlowOutcome.LOGIN_REJECTED, ("LOGIN_REJECTED", "账号或密码被拒绝")),
+        (FlowOutcome.FAILED, ("FAILED", "登录失败，请稍后重试")),
+    ],
+)
+def test_login_once_maps_all_flow_outcomes(monkeypatch, flow_outcome, expected):
+    sensitive_result = FlowResult(
+        outcome=flow_outcome,
+        detail="url=secret-url&cookie=secret-cookie",
+        via="password",
+        user_index="secret-user-index",
+    )
+    calls = _install_auth_flow(monkeypatch, sensitive_result)
+
+    result = MobileProbeBridge(_cfg(), session=FakeSession()).login_once()
+
+    assert result == {"outcome": expected[0], "hint": expected[1]}
+    assert "secret-url" not in repr(result)
+    assert "secret-cookie" not in repr(result)
+    assert "secret-user-index" not in repr(result)
+    assert calls[0]["kwargs"]["session_path"] is None
+
+
+def test_login_once_forwards_allow_password_without_persistence(monkeypatch):
+    session = ClosableFakeSession()
+    cfg = _cfg()
+    calls = _install_auth_flow(monkeypatch, FlowResult(FlowOutcome.NO_NETWORK))
+    bridge = MobileProbeBridge(cfg, session=session)
+
+    result = bridge.login_once(allow_password=False)
+    bridge.close()
+
+    assert result == {"outcome": "NO_NETWORK", "hint": "当前无可用网络"}
+    assert calls[0]["session"] is session
+    assert calls[0]["cfg"] is cfg
+    assert calls[0]["kwargs"]["session_path"] is None
+    assert calls[0]["allow_password"] is False
+    assert session.trust_env is True
+    assert session.close_count == 0
+
+
+def test_login_once_sanitizes_unknown_result(monkeypatch):
+    _install_auth_flow(monkeypatch, SimpleNamespace(
+        outcome=object(),
+        detail="redirect=secret-url",
+        user_index="secret-user-index",
+    ))
+
+    result = MobileProbeBridge(_cfg(), session=FakeSession()).login_once()
+
+    assert result == {"outcome": "FAILED", "hint": "登录失败，请稍后重试"}
+    assert "secret-url" not in repr(result)
+    assert "secret-user-index" not in repr(result)
+
+
+def test_login_once_sanitizes_internal_exception(monkeypatch):
+    _install_auth_flow(
+        monkeypatch,
+        RuntimeError("password=secret-pass&code=secret-code"),
+    )
+
+    result = MobileProbeBridge(_cfg(), session=FakeSession()).login_once()
+
+    assert result == {"outcome": "FAILED", "hint": "登录失败，请稍后重试"}
+    assert "secret-pass" not in repr(result)
+    assert "secret-code" not in repr(result)
+
+
+def test_login_once_does_not_authenticate_after_close(monkeypatch):
+    calls = _install_auth_flow(monkeypatch, FlowResult(FlowOutcome.LOGGED_IN))
+    bridge = MobileProbeBridge(_cfg(), session=ClosableFakeSession())
+    bridge.close()
+
+    result = bridge.login_once()
+
+    assert result == {"outcome": "FAILED", "hint": "桥接已关闭，未执行登录"}
+    assert calls == []
+
+
+def test_login_once_uses_owned_session_and_closes_it(monkeypatch):
+    created = []
+
+    def make_session():
+        session = ClosableFakeSession()
+        created.append(session)
+        return session
+
+    monkeypatch.setattr("oit_portal.mobile_bridge.requests.Session", make_session)
+    calls = _install_auth_flow(monkeypatch, FlowResult(FlowOutcome.ALREADY_ONLINE))
+    bridge = MobileProbeBridge(_cfg())
+
+    result = bridge.login_once()
+    bridge.close()
+    bridge.close()
+
+    session = created[0]
+    assert result == {"outcome": "ALREADY_ONLINE", "hint": "网络已在线"}
+    assert calls[0]["session"] is session
+    assert session.trust_env is False
+    assert session.close_count == 1

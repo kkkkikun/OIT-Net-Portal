@@ -1,12 +1,13 @@
 """移动端网络探测桥接。
 
-只向 UI/嵌入层暴露稳定、脱敏的探测结果；登录、capture 与守护能力不在这里实现。
+只向 UI/嵌入层暴露稳定、脱敏的探测和单次登录结果；capture 与守护能力不在这里实现。
 """
 
 from __future__ import annotations
 
 import requests
 
+from .auth.flow import AuthFlow, FlowOutcome
 from .config import Config
 from .log import get_logger
 from .probe import ProbeStatus, probe as probe_network
@@ -20,6 +21,17 @@ _STATUS_HINTS = {
 }
 _UNKNOWN_RESULT = {"status": "UNKNOWN", "hint": "网络状态暂时不可用"}
 _CLOSED_RESULT = {"status": "UNKNOWN", "hint": "探测桥接已关闭"}
+_LOGIN_HINTS = {
+    FlowOutcome.ALREADY_ONLINE: ("ALREADY_ONLINE", "网络已在线"),
+    FlowOutcome.LOGGED_IN: ("LOGGED_IN", "登录成功"),
+    FlowOutcome.NO_NETWORK: ("NO_NETWORK", "当前无可用网络"),
+    FlowOutcome.NEED_CREDENTIALS: ("NEED_CREDENTIALS", "需要更新账号或密码"),
+    FlowOutcome.CAPTCHA_REQUIRED: ("CAPTCHA_REQUIRED", "需要人工完成验证码"),
+    FlowOutcome.LOGIN_REJECTED: ("LOGIN_REJECTED", "账号或密码被拒绝"),
+    FlowOutcome.FAILED: ("FAILED", "登录失败，请稍后重试"),
+}
+_LOGIN_FAILED_RESULT = {"outcome": "FAILED", "hint": "登录失败，请稍后重试"}
+_LOGIN_CLOSED_RESULT = {"outcome": "FAILED", "hint": "桥接已关闭，未执行登录"}
 
 
 class MobileProbeBridge:
@@ -49,6 +61,22 @@ class MobileProbeBridge:
             return dict(_UNKNOWN_RESULT)
         status, hint = _STATUS_HINTS.get(result.status, ("UNKNOWN", "网络状态暂时不可用"))
         return {"status": status, "hint": hint}
+
+    def login_once(self, *, allow_password: bool = True) -> dict[str, str]:
+        """显式执行一次认证流程，不启用会话落盘或后台循环。"""
+        if self._closed:
+            return dict(_LOGIN_CLOSED_RESULT)
+        try:
+            flow = AuthFlow(self._session, self._cfg, session_path=None)
+            result = flow.ensure_online(allow_password=allow_password)
+        except Exception:  # noqa: BLE001 - 桥接边界统一脱敏，不泄露底层细节
+            logger.warning("移动端登录桥接异常，已返回 FAILED")
+            return dict(_LOGIN_FAILED_RESULT)
+        outcome, hint = _LOGIN_HINTS.get(
+            getattr(result, "outcome", None),
+            ("FAILED", "登录失败，请稍后重试"),
+        )
+        return {"outcome": outcome, "hint": hint}
 
     def close(self) -> None:
         """关闭自有 Session；多次调用安全，外部注入的 Session 不会被关闭。"""
