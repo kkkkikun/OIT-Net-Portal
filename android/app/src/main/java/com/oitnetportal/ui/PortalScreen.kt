@@ -34,6 +34,7 @@ fun PortalApp(viewModel: PortalViewModel) {
             state = state,
             onRefresh = viewModel::refresh,
             onLogin = viewModel::loginOnce,
+            onCredentialsSubmit = viewModel::loginWithCredentials,
         )
     }
 }
@@ -43,6 +44,7 @@ fun PortalScreen(
     state: PortalUiState,
     onRefresh: () -> Unit,
     onLogin: () -> Unit,
+    onCredentialsSubmit: (String, String) -> Unit,
 ) {
     Scaffold { innerPadding ->
         Column(
@@ -67,6 +69,11 @@ fun PortalScreen(
 
             StatusCard(state)
 
+            PortalCredentialForm(
+                onSubmit = onCredentialsSubmit,
+                isBusy = state.isBusy,
+            )
+
             Card(modifier = Modifier.fillMaxWidth()) {
                 Row(
                     modifier = Modifier
@@ -76,14 +83,14 @@ fun PortalScreen(
                 ) {
                     Button(
                         onClick = onLogin,
-                        enabled = !state.isBusy,
+                        enabled = state.coreAvailable && !state.isBusy,
                         modifier = Modifier.weight(1f),
                     ) {
-                        Text("手动登录")
+                        Text("重试登录")
                     }
                     OutlinedButton(
                         onClick = onRefresh,
-                        enabled = !state.isBusy,
+                        enabled = state.coreAvailable && !state.isBusy,
                         modifier = Modifier.weight(1f),
                     ) {
                         Text("刷新状态")

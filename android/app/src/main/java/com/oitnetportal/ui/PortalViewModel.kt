@@ -4,16 +4,26 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import com.oitnetportal.core.ChaquopyPortalCoreBridge
 import com.oitnetportal.core.CoreUnavailableException
 import com.oitnetportal.core.LoginOutcome
+import com.oitnetportal.core.LoginResult
 import com.oitnetportal.core.PortalCoreBridge
 import com.oitnetportal.core.PortalStatus
+import com.oitnetportal.core.UnavailablePortalCoreBridge
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 data class PortalUiState(
     val coreAvailable: Boolean,
@@ -24,15 +34,22 @@ data class PortalUiState(
 )
 
 class PortalViewModel(
-    private val core: PortalCoreBridge,
+    initialCore: PortalCoreBridge,
+    private val bridgeFactory: (suspend (String, String) -> ChaquopyPortalCoreBridge)? = null,
 ) : ViewModel() {
+    private var core: PortalCoreBridge = initialCore
+    private val operationMutex = Mutex()
+
+    @Volatile
+    private var disposed = false
+
     private val _uiState = MutableStateFlow(
         PortalUiState(
-            coreAvailable = core.isAvailable,
-            statusDetail = if (core.isAvailable) {
-                "尚未探测"
-            } else {
-                "Python 核心桥接尚未接入；当前仅展示界面骨架。"
+            coreAvailable = initialCore.isAvailable,
+            statusDetail = when {
+                initialCore.isAvailable -> "尚未探测"
+                bridgeFactory == null -> "Python 核心桥接尚未接入；当前仅展示界面骨架。"
+                else -> "请先输入校园网账号和密码"
             },
         ),
     )
@@ -49,7 +66,60 @@ class PortalViewModel(
     }
 
     fun loginOnce() = runOperation {
-        val result = core.loginOnce()
+        applyLoginResult(core.loginOnce())
+    }
+
+    fun loginWithCredentials(username: String, password: String) {
+        if (username.isBlank() || password.isBlank()) {
+            _uiState.update { it.copy(notice = "请输入校园网账号和密码") }
+            return
+        }
+        val factory = bridgeFactory
+        if (factory == null) {
+            _uiState.update {
+                it.copy(notice = "Python 核心桥接尚未接入，无法执行该操作。")
+            }
+            return
+        }
+
+        runOperation {
+            val adopted = withContext(Dispatchers.IO) {
+                var newCore: ChaquopyPortalCoreBridge? = null
+                var adopted = false
+                try {
+                    val createdCore = factory(username, password)
+                    newCore = createdCore
+                    if (disposed) {
+                        releaseCore(createdCore)
+                        return@withContext false
+                    }
+
+                    val oldCore = core
+                    core = createdCore
+                    adopted = true
+                    if (!disposed) {
+                        _uiState.update {
+                            it.copy(
+                                coreAvailable = true,
+                                statusDetail = "Python 核心已连接",
+                            )
+                        }
+                    }
+                    releaseCore(oldCore)
+                    true
+                } finally {
+                    if (!adopted) {
+                        newCore?.let { releaseCore(it) }
+                    }
+                }
+            }
+            if (adopted && !disposed) {
+                applyLoginResult(core.loginOnce())
+            }
+        }
+    }
+
+    private fun applyLoginResult(result: LoginResult) {
         _uiState.update {
             it.copy(
                 status = when (result.outcome) {
@@ -66,12 +136,25 @@ class PortalViewModel(
         }
     }
 
+    private suspend fun releaseCore(target: PortalCoreBridge) {
+        val chaquopyBridge = target as? ChaquopyPortalCoreBridge ?: return
+        withContext(NonCancellable) {
+            try {
+                chaquopyBridge.shutdown()
+            } catch (_: Exception) {
+                // Shutdown failures are deliberately not exposed to UI or logs.
+            }
+        }
+    }
+
     private fun runOperation(operation: suspend () -> Unit) {
-        if (_uiState.value.isBusy) return
+        if (disposed || _uiState.value.isBusy) return
 
         viewModelScope.launch {
-            _uiState.update { it.copy(isBusy = true, notice = null) }
+            if (!operationMutex.tryLock()) return@launch
             try {
+                if (disposed || _uiState.value.isBusy) return@launch
+                _uiState.update { it.copy(isBusy = true, notice = null) }
                 operation()
             } catch (_: CoreUnavailableException) {
                 _uiState.update {
@@ -80,12 +163,24 @@ class PortalViewModel(
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
-                // Bridge failures are intentionally collapsed to a UI-safe message.
                 _uiState.update {
                     it.copy(notice = "操作失败；脱敏诊断接口尚未接入。")
                 }
             } finally {
                 _uiState.update { it.copy(isBusy = false) }
+                operationMutex.unlock()
+            }
+        }
+    }
+
+    override fun onCleared() {
+        disposed = true
+        // Best-effort cleanup: process death can still prevent this independent IO work.
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+            operationMutex.withLock {
+                val finalCore = core
+                core = UnavailablePortalCoreBridge()
+                releaseCore(finalCore)
             }
         }
     }
@@ -98,9 +193,12 @@ class PortalViewModel(
     }
 
     companion object {
-        fun factory(core: PortalCoreBridge) = viewModelFactory {
+        fun factory(
+            core: PortalCoreBridge,
+            bridgeFactory: (suspend (String, String) -> ChaquopyPortalCoreBridge)? = null,
+        ) = viewModelFactory {
             initializer {
-                PortalViewModel(core)
+                PortalViewModel(core, bridgeFactory)
             }
         }
     }
