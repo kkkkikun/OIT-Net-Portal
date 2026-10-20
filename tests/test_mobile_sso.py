@@ -27,18 +27,19 @@ def _cfg():
 
 
 def _form_html(*, action=None, method="POST", aes=True, captcha=False,
-               username=True):
+               username=True, script=None):
     action_attr = f' action="{action}"' if action is not None else ""
-    script = ""
-    if aes:
-        script = (
-            "<script>"
-            "key=CryptoJS.enc.Utf8.parse('" + AES_SOURCE + "'.substr(0,16));"
-            "iv=CryptoJS.enc.Utf8.parse('" + AES_SOURCE + "'.substr(0,16));"
-            "CryptoJS.AES.encrypt(str,key,{iv:iv,mode:CryptoJS.mode.CBC,"
-            "padding:CryptoJS.pad.ZeroPadding});"
-            "</script>"
-        )
+    if script is None:
+        script = ""
+        if aes:
+            script = (
+                "<script>"
+                "key=CryptoJS.enc.Utf8.parse('" + AES_SOURCE + "'.substr(0,16));"
+                "iv=CryptoJS.enc.Utf8.parse('" + AES_SOURCE + "'.substr(0,16));"
+                "CryptoJS.AES.encrypt(str,key,{iv:iv,mode:CryptoJS.mode.CBC,"
+                "padding:CryptoJS.pad.ZeroPadding});"
+                "</script>"
+            )
     username_input = '<input name="username" type="text">' if username else ""
     captcha_input = '<input name="captcha" type="text">' if captcha else ""
     return (
@@ -51,6 +52,16 @@ def _form_html(*, action=None, method="POST", aes=True, captcha=False,
         + '<input name="password" type="hidden" value="">'
         + captcha_input
         + "</form>"
+    )
+
+
+def _aes_script(options: str, *, key_source=AES_SOURCE, iv_source=AES_SOURCE) -> str:
+    return (
+        "<script>"
+        "key=CryptoJS.enc.Utf8.parse('" + key_source + "'.substr(0,16));"
+        "iv=CryptoJS.enc.Utf8.parse('" + iv_source + "'.substr(0,16));"
+        "CryptoJS.AES.encrypt(str,key,{" + options + "});"
+        "</script>"
     )
 
 
@@ -129,6 +140,19 @@ def test_mobile_relative_action_uses_standard_url_resolution(monkeypatch):
     assert session.posts[0][0] == expected
 
 
+def test_mobile_explicit_ecb_zero_padding_still_uses_encryption(monkeypatch):
+    _block_overrides(monkeypatch)
+    script = _aes_script("mode:CryptoJS.mode.ECB,padding:CryptoJS.pad.ZeroPadding")
+    session = _session_for_form(_form_html(script=script))
+
+    result = MobileProbeBridge(_cfg(), session=session).login_once()
+
+    assert result["outcome"] == "LOGGED_IN"
+    payload = session.posts[0][1]
+    assert payload["password"] == _aes_encrypt(
+        "secret-pass", AES_KEY, AES_KEY, "aes_ecb", "zero")
+
+
 @pytest.mark.parametrize(
     "html",
     [
@@ -156,6 +180,40 @@ def test_mobile_captcha_form_does_not_send_password(monkeypatch):
     result = MobileProbeBridge(_cfg(), session=session).login_once()
 
     assert result["outcome"] == "CAPTCHA_REQUIRED"
+    assert session.posts == []
+
+
+@pytest.mark.parametrize(
+    "html",
+    [
+        _form_html(aes=False),
+        _form_html(aes=False,
+                   script='<script src="/static/auth/login.js"></script>'),
+        _form_html(script=_aes_script(
+            "iv:iv,padding:CryptoJS.pad.ZeroPadding")),
+        _form_html(script=_aes_script(
+            "iv:iv,mode:CryptoJS.mode.CBC")),
+        _form_html(script=_aes_script(
+            "mode:CryptoJS.mode.CBC,padding:CryptoJS.pad.ZeroPadding")),
+        _form_html(script=_aes_script(
+            "iv:iv,mode:CryptoJS.mode.CFB,padding:CryptoJS.pad.ZeroPadding")),
+        _form_html(script=_aes_script(
+            "iv:iv,mode:CryptoJS.mode.CBC,padding:CryptoJS.pad.Pkcs5")),
+        _form_html(script=_aes_script(
+            "iv:iv,mode:CryptoJS.mode.CBC,padding:CryptoJS.pad.ZeroPadding",
+            key_source="short")),
+        _form_html(script=_aes_script(
+            "iv:iv,mode:CryptoJS.mode.CBC,padding:CryptoJS.pad.ZeroPadding",
+            iv_source="short-iv")),
+    ],
+)
+def test_mobile_uncertain_encryption_never_posts_password(monkeypatch, html):
+    _block_overrides(monkeypatch)
+    session = _session_for_form(html)
+
+    result = MobileProbeBridge(_cfg(), session=session).login_once()
+
+    assert result["outcome"] == "FAILED"
     assert session.posts == []
 
 

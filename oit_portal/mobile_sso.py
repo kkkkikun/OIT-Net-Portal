@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from urllib.parse import urljoin, urlsplit
 
 import requests
@@ -24,6 +25,17 @@ _MAX_FORM_BYTES = 65536
 _REJECT_MARKERS = ("密码错误", "账号或密码", "incorrect", "failed")
 _USERNAME_HINTS = ("user", "account", "username", "xh", "stu", "login")
 _ALLOWED_SCHEMES = {"http", "https"}
+_UTF8_ASSIGN_RE = re.compile(
+    r"\b([A-Za-z_$][\w$]*)\s*=\s*CryptoJS\.enc\.Utf8\.parse\(\s*"
+    r"['\"]([^'\"]+)['\"]\s*"
+    r"(?:\.\s*substr\(\s*(\d+)\s*,\s*(\d+)\s*\))?\s*\)",
+    re.I,
+)
+_AES_CALL_RE = re.compile(
+    r"CryptoJS\.AES\.encrypt\s*\(\s*[^,]+,\s*([A-Za-z_$][\w$]*)\s*,"
+    r"\s*\{(.*?)\}\s*\)",
+    re.I | re.S,
+)
 
 
 @dataclass(frozen=True)
@@ -138,14 +150,55 @@ def _password_field(inputs: list[tuple[str, str, str]]) -> str | None:
 
 
 def _transform_password(password: str, html: str) -> str:
-    aes = htmlutil.find_aes(html)
-    if aes:
-        mode = "aes_ecb" if aes.get("mode") == "ECB" else "aes_cbc"
-        return _aes_encrypt(password, aes["key"], aes["iv"], mode,
-                            aes.get("padding", "zero"))
-    if htmlutil.has_aes_hint(html) or htmlutil.has_rsa_hint(html):
-        raise ProtocolMismatch("检测到密码前端加密，但当次参数无法安全解析")
-    return password
+    aes = _strict_aes_params(html)
+    mode = "aes_ecb" if aes["mode"] == "ECB" else "aes_cbc"
+    return _aes_encrypt(password, aes["key"], aes["iv"], mode, aes["padding"])
+
+
+def _strict_aes_params(html: str) -> dict[str, str]:
+    """只接受与当次 AES.encrypt 调用明确关联的完整参数。"""
+    call = _AES_CALL_RE.search(html)
+    if not call:
+        raise ProtocolMismatch("当前页面没有明确可解析的 CryptoJS AES 调用")
+    key_name, options = call.group(1), call.group(2)
+    assignments = {name: _utf8_value(raw, start, length)
+                   for name, raw, start, length in _UTF8_ASSIGN_RE.findall(html)}
+    key = assignments.get(key_name)
+    if key is None or len(key.encode("utf-8")) not in (16, 24, 32):
+        raise ProtocolMismatch("AES key 与加密调用无法可靠关联或长度非法")
+
+    mode = _cryptojs_option(options, "mode", r"CryptoJS\.mode\.(\w+)")
+    padding = _cryptojs_option(options, "padding", r"CryptoJS\.pad\.(\w+)")
+    if mode not in ("CBC", "ECB"):
+        raise ProtocolMismatch("AES mode 缺失或不受移动端支持")
+    if padding not in ("ZeroPadding", "Pkcs7"):
+        raise ProtocolMismatch("AES padding 缺失或不受移动端支持")
+
+    iv = key
+    if mode == "CBC":
+        iv_match = re.search(r"\biv\s*:\s*([A-Za-z_$][\w$]*)", options, re.I)
+        if not iv_match:
+            raise ProtocolMismatch("AES-CBC 缺少明确 iv")
+        iv = assignments.get(iv_match.group(1))
+        if iv is None or len(iv.encode("utf-8")) != 16:
+            raise ProtocolMismatch("AES-CBC iv 与加密调用无法可靠关联或长度非法")
+    return {"key": key, "iv": iv, "mode": mode,
+            "padding": "pkcs7" if padding == "Pkcs7" else "zero"}
+
+
+def _cryptojs_option(options: str, name: str, value_pattern: str) -> str:
+    match = re.search(
+        rf"\b{re.escape(name)}\s*:\s*{value_pattern}", options, re.I)
+    if not match:
+        raise ProtocolMismatch(f"AES {name} 参数缺失")
+    return match.group(1)
+
+
+def _utf8_value(raw: str, start: str, length: str) -> str:
+    if not length:
+        return raw
+    offset = int(start or 0)
+    return raw[offset:offset + int(length)]
 
 
 def _require_same_origin(endpoint: str, authorize_url: str) -> None:
