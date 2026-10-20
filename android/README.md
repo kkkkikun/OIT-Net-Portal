@@ -12,6 +12,7 @@
 - Python `requests.Session` 由 `MobileProbeBridge.close()` 显式释放；Kotlin 侧先调用 Python `close()`，再释放 Chaquopy 引用。
 - 用户可手动结束应用内 Python 认证会话；该操作不向校园网服务器发送退出请求，也不承诺清除界面中的用户名或实现内存级清零。
 - Network Security Config 默认禁止明文 HTTP，仅对当前源码确认的固定探测域名、SSO 域名和 ePortal IP 设置最小范围例外。
+- 首次安装缺少 `protocol.json` 时，移动端可识别唯一 HTML POST 表单，包括无 `action`、隐藏密码字段和当次页面动态 AES 参数；跨域表单、验证码、无表单 SPA 或未知协议均安全失败，不会试发明文密码。
 
 ## 明确未接通
 

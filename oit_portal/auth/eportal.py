@@ -48,10 +48,12 @@ def _sub_placeholders(text: str) -> bool:
 
 
 class EportalAdapter:
-    def __init__(self, session: requests.Session, cfg: Config):
+    def __init__(self, session: requests.Session, cfg: Config, *,
+                 apply_protocol_overrides: bool = True):
         self.session = session
         self.cfg = cfg
-        apply_overrides(CAPTURED, "eportal")  # capture 向导自动发现的协议覆盖
+        if apply_protocol_overrides:
+            apply_overrides(CAPTURED, "eportal")  # capture 向导自动发现的协议覆盖
 
     def online(self, code: AuthCode, challenge: PortalChallenge) -> OnlineResult:
         if not code.code:  # 表单直登模式：登录 POST 已直接上线，无需再调 ePortal

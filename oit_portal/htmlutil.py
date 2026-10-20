@@ -123,6 +123,11 @@ def find_aes(text: str) -> dict | None:
     }
 
 
+def has_aes_hint(text: str) -> bool:
+    """页面是否出现 CryptoJS AES 加密调用（不代表参数已可解析）。"""
+    return _AES_ENCRYPT_RE.search(text) is not None
+
+
 def has_rsa_hint(text: str) -> bool:
     low = text.lower()
     return any(hint.lower() in low for hint in RSA_JS_HINTS)

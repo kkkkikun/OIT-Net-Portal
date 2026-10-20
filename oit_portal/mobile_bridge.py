@@ -9,9 +9,11 @@ from collections.abc import Iterable
 
 import requests
 
+from .auth.eportal import EportalAdapter
 from .auth.flow import AuthFlow, FlowOutcome
 from .config import Config
 from .log import get_logger
+from .mobile_sso import MobileSsoAdapter
 from .probe import ProbeStatus, probe as probe_network
 
 logger = get_logger()
@@ -69,10 +71,17 @@ class MobileProbeBridge:
         if self._closed:
             return dict(_LOGIN_CLOSED_RESULT)
         try:
-            flow = AuthFlow(self._session, self._cfg, session_path=None)
+            flow = AuthFlow(
+                self._session,
+                self._cfg,
+                sso=MobileSsoAdapter(self._session, self._cfg),
+                eportal=EportalAdapter(self._session, self._cfg,
+                                       apply_protocol_overrides=False),
+                session_path=None,
+            )
             result = flow.ensure_online(allow_password=allow_password)
-        except Exception:  # noqa: BLE001 - 桥接边界统一脱敏，不泄露底层细节
-            logger.warning("移动端登录桥接异常，已返回 FAILED")
+        except Exception as exc:  # noqa: BLE001 - 桥接边界统一脱敏，不泄露底层细节
+            logger.warning("移动端登录桥接异常（%s），已返回 FAILED", type(exc).__name__)
             return dict(_LOGIN_FAILED_RESULT)
         outcome, hint = _LOGIN_HINTS.get(
             getattr(result, "outcome", None),

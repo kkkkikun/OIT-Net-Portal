@@ -58,11 +58,13 @@ def _is_captured(value: str) -> bool:
 
 
 class SsoAdapter:
-    def __init__(self, session: requests.Session, cfg: Config):
+    def __init__(self, session: requests.Session, cfg: Config, *,
+                 apply_protocol_overrides: bool = True):
         self.session = session
         self.cfg = cfg
         self.base = f"http://{cfg.advanced.eportal_host}"  # 仅占位，真正 base 来自 challenge
-        apply_overrides(CAPTURED, "sso")  # capture 向导自动发现的协议覆盖
+        if apply_protocol_overrides:
+            apply_overrides(CAPTURED, "sso")  # capture 向导自动发现的协议覆盖
 
     # ── 内部工具 ──────────────────────────────────────────────
 
