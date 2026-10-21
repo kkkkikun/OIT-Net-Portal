@@ -10,12 +10,14 @@ import com.oitnetportal.core.LoginOutcome
 import com.oitnetportal.core.LoginResult
 import com.oitnetportal.core.PortalCoreBridge
 import com.oitnetportal.core.PortalStatus
+import com.oitnetportal.core.ProbeResult
 import com.oitnetportal.core.UnavailablePortalCoreBridge
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -56,13 +58,7 @@ class PortalViewModel(
     val uiState: StateFlow<PortalUiState> = _uiState.asStateFlow()
 
     fun refresh() = runOperation {
-        val result = core.probe()
-        _uiState.update {
-            it.copy(
-                status = result.status,
-                statusDetail = result.detail.ifBlank { defaultStatusDetail(result.status) },
-            )
-        }
+        applyProbeResult(core.probe())
     }
 
     fun loginOnce() = runOperation {
@@ -166,6 +162,54 @@ class PortalViewModel(
         }
     }
 
+    private fun applyProbeResult(result: ProbeResult) {
+        _uiState.update {
+            it.copy(
+                status = result.status,
+                statusDetail = result.detail.ifBlank { defaultStatusDetail(result.status) },
+            )
+        }
+    }
+
+    /** 默认网络断开：直接反映离线，不触碰 Python 桥接。 */
+    fun onNetworkLost() {
+        if (disposed) return
+        _uiState.update {
+            if (it.status == PortalStatus.OFFLINE) it
+            else it.copy(status = PortalStatus.OFFLINE, statusDetail = "网络连接已断开")
+        }
+    }
+
+    /**
+     * 默认网络恢复或能力变化：做一次有界重试的状态探测。
+     * 只探测，不提交凭据、不自动登录；本地会话已结束（coreAvailable=false）时静默跳过。
+     */
+    fun onNetworkAvailable() {
+        if (disposed || !_uiState.value.coreAvailable) return
+        runOperation {
+            var attempt = 0
+            while (attempt < NETWORK_RECOVERY_MAX_ATTEMPTS) {
+                attempt++
+                val result = core.probe()
+                applyProbeResult(result)
+                // ONLINE/CAPTIVE 是确定结论；OFFLINE/UNKNOWN 可能是门户未就绪的瞬态
+                if (result.status == PortalStatus.ONLINE ||
+                    result.status == PortalStatus.CAPTIVE ||
+                    attempt >= NETWORK_RECOVERY_MAX_ATTEMPTS
+                ) {
+                    return@runOperation
+                }
+                delay(NETWORK_RECOVERY_DELAY_MS)
+            }
+        }
+    }
+
+    /** 回到前台：单次状态探测；本地会话已结束时静默跳过。 */
+    fun onAppForeground() {
+        if (disposed || !_uiState.value.coreAvailable) return
+        refresh()
+    }
+
     private fun runOperation(operation: suspend () -> Unit) {
         if (disposed || _uiState.value.isBusy) return
 
@@ -212,6 +256,10 @@ class PortalViewModel(
     }
 
     companion object {
+        /** 网络恢复探测：重试次数与间隔均有上界，避免门户未就绪时无限循环。 */
+        private const val NETWORK_RECOVERY_MAX_ATTEMPTS = 3
+        private const val NETWORK_RECOVERY_DELAY_MS = 2000L
+
         fun factory(
             core: PortalCoreBridge,
             bridgeFactory: (suspend (String, String) -> ChaquopyPortalCoreBridge)? = null,

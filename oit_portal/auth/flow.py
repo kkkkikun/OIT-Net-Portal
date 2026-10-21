@@ -7,6 +7,7 @@ flow 对 adapter 的调用顺序、失败处理、重试决策在此写死；
 from __future__ import annotations
 
 import enum
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -49,13 +50,19 @@ class AuthFlow:
                  sso: SsoAdapter | None = None,
                  eportal: EportalAdapter | None = None,
                  prober: Callable[[], ProbeResult] | None = None,
-                 session_path: Path | None = None):
+                 session_path: Path | None = None,
+                 verify_attempts: int = 3,
+                 verify_delay_sec: float = 1.5,
+                 sleeper: Callable[[float], None] = time.sleep):
         self.session = session
         self.cfg = cfg
         self.sso = sso or SsoAdapter(session, cfg)
         self.eportal = eportal or EportalAdapter(session, cfg)
         self._prober = prober or (lambda: probe(session, cfg))
         self._session_path = session_path
+        self._verify_attempts = max(1, verify_attempts)
+        self._verify_delay_sec = max(0.0, verify_delay_sec)
+        self._sleeper = sleeper
 
     # ── 主入口 ───────────────────────────────────────────────
 
@@ -106,8 +113,9 @@ class AuthFlow:
                 user_index=result.user_index,
                 keepalive_interval=result.keepalive_interval))
 
-        # 二次探测确认（防「响应成功但仍被劫持」）
-        verify = self._prober()
+        # 二次探测确认（防「响应成功但仍被劫持」）；门户放通有传播延迟，
+        # 单次复测瞬态失败不能直接把已确认的上线误判为 FAILED，故做有界重试。
+        verify = self._verify_online()
         outcome = (FlowOutcome.LOGGED_IN if verify.status is ProbeStatus.ONLINE
                    else FlowOutcome.FAILED)
         detail = f"via={auth.obtained_via}" if outcome is FlowOutcome.LOGGED_IN \
@@ -118,6 +126,23 @@ class AuthFlow:
         return self._persist_session(fr)
 
     # ── 内部步骤 ─────────────────────────────────────────────
+
+    def _verify_online(self) -> ProbeResult:
+        """上线复测：任一尝试 ONLINE 即通过；瞬态异常按未上线处理，重试次数有界。"""
+        last: ProbeResult | None = None
+        for attempt in range(self._verify_attempts):
+            if attempt:
+                self._sleeper(self._verify_delay_sec)
+            try:
+                last = self._prober()
+            except Exception:  # noqa: BLE001 - 复测瞬态异常按未上线处理，继续有界重试
+                logger.debug("上线复测第 %d 次探测异常，按未上线处理", attempt + 1)
+                continue
+            if last.status is ProbeStatus.ONLINE:
+                break
+        if last is None:
+            return ProbeResult(ProbeStatus.OFFLINE, detail="上线复测探测全部异常")
+        return last
 
     def _obtain_code(self, challenge: PortalChallenge,
                      *, allow_password: bool) -> AuthCode | FlowResult:

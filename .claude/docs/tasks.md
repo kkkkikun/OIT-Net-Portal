@@ -5,17 +5,23 @@
 
 ## 进行中
 
-### 路线B：Android 原生 App（`android/`，WIP 未编译）
+### 路线B：Android 原生 App（`android/`，Debug APK 已构建，真机验收第二轮进行中）
 
 已接线：Compose 骨架、Chaquopy 桥接工厂、脱敏探测/单次登录桥接、手动登录（账密表单）、
 首装无 protocol.json 的 SSO 表单解析（fail-closed）、本地会话关闭、网络安全配置最小例外。
 
+第一轮真机验收（2026-10-21）发现两个缺陷并已修复：
+- 首次登录误判失败 → 根因：AuthFlow 上线复测单次零容错；已加有界重试（3 次/1.5s，可注入 sleeper）
+- Wi-Fi 恢复状态不刷新 → 根因：无网络监听；已加 registerDefaultNetworkCallback +
+  前台恢复探测（有界重试 3 次/2s，只探测不自动登录，会话结束后静默跳过）
+
 未接通（按 android/README.md 清单）：
 - [ ] Capture、设置、日志查看、后台自动重连（开关保持禁用）
-- [ ] 前台 Service 接管认证流程 + 运行时通知权限 + 网络恢复回调
+- [ ] 前台 Service 接管认证流程 + 运行时通知权限
 - [ ] 凭据安全存储（当前每次手动登录都要输入）
-- [ ] Gradle Wrapper 生成 → 首次编译 → APK 构建
-- [ ] 真机验证：Chaquopy requests 明文限制行为、动态门户跳转、IP 字面量例外、校园网实际登录
+- [x] 网络恢复回调（2026-10-21）
+- [x] 首次编译 → APK 构建（2026-10-21，无 Wrapper，用本机 Gradle 8.9 + 命令行代理参数）
+- [ ] 第二轮真机验收：首次登录/刷新/Wi-Fi 断开恢复/重试登录/结束会话/重新登录
 
 ## 待办
 
