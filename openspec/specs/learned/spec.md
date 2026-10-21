@@ -1,6 +1,6 @@
 # Learned Spec — oit-portal
 
-> 版本: 1.1.0 | 最后更新: 2026-10-16
+> 版本: 1.2.0 | 最后更新: 2026-10-21
 
 ## Purpose
 
@@ -75,6 +75,20 @@
 - **症状**:（未发生，设计评审拦截）给 unit 加沙箱硬化
 - **根因**: 单实例锁与 pid 文件在 `tempfile.gettempdir()`（/tmp），配置/日志在 `~/.config`——PrivateTmp 让 `oit-portal stop` 找不到 pid，ProtectHome 让日志/配置写不进
 - **预防**: unit 模板注释明令禁止；`User=` 普通用户运行已提供足够的边界
+
+### 移动端首装没有 protocol.json（2026-10 路线B）
+
+- **症状**: 桌面/Termux/Linux 流程依赖 `oit-portal capture` 预先生成 protocol.json；Android 原生 App 首装时该文件不存在，也不能要求用户先跑向导
+- **根因**: capture 向导是 CLI 交互式流程，不属于移动端桥接能力范围
+- **解决**: `mobile_sso.py` 独立适配器——只解析当次登录页的 CryptoJS AES 表单（即时提取 key/iv），不读不写 protocol.json，不向多候选端点试凭据；其余形态一律 fail-closed 提示人工处理
+- **预防**: 移动端任何「复用桌面流程」的冲动都要先过 mobile_bridge 白名单边界；加密方式不确定时禁止明文提交
+
+### 移动端桥接不能透传 Python 异常（2026-10 路线B）
+
+- **症状**:（设计期拦截）Kotlin 侧直接展示 Python 异常/URL/会话细节
+- **根因**: 异常文本可能含内网地址、协议参数、cookie 片段；UI 层不需要也不该有这些
+- **解决**: mobile_bridge 按白名单映射为稳定 status/hint；requests.Session 由 `MobileProbeBridge.close()` 显式释放
+- **预防**: 新增桥接返回值必须走白名单枚举，测试用契约用例（test_mobile_bridge.py）兜底
 
 ## 技巧模式
 

@@ -1,6 +1,6 @@
 # Architecture Spec — oit-portal
 
-> 版本: 1.1.0 | 最后更新: 2026-10-16
+> 版本: 1.2.0 | 最后更新: 2026-10-21
 
 ## Purpose
 
@@ -86,6 +86,30 @@ Windows（计划任务）、Android Termux（Termux:Boot）、Linux（systemd �
 
 - **WHEN** 修改 paths.py 的路径优先级逻辑
 - **THEN** 同时检查 is_termux() 分支与便携模式分支（sys.frozen / 源码根目录）
+
+### Requirement: 移动端桥接（路线B Android App）
+
+路线B Android 原生 App（`android/`，Kotlin + Compose + Chaquopy 17.1.0）MUST 按需复用仓库根目录的 Python 核心，且 MUST 通过 `oit_portal/mobile_bridge.py` 的脱敏桥接交互——桥接只暴露探测与单次登录，MUST NOT 暴露 capture / daemon 能力。
+
+#### Scenario: Python 返回值脱敏
+
+- **WHEN** Python 核心向 Kotlin/UI 层返回探测或登录结果
+- **THEN** MUST 按白名单映射为稳定的 status/hint 结构，MUST NOT 透传原始异常、URL、会话内容或协议细节
+
+#### Scenario: 凭据加密不确定时
+
+- **WHEN** 移动端无法从当次登录页确认密码加密方式（普通明文表单、外链/未知加密、参数不完整、跨域表单、验证码、无表单 SPA、未知协议）
+- **THEN** MUST fail-closed（安全失败并提示人工处理），MUST NOT 尝试明文提交或猜测加密
+
+#### Scenario: 首装无 protocol.json
+
+- **WHEN** 移动端首次安装、用户配置目录无 protocol.json
+- **THEN** mobile_sso.py MUST 仅解析当次页面的 CryptoJS AES 登录表单并即时提取加密参数；MUST NOT 读取/写入 protocol.json，MUST NOT 向多个候选端点试发凭据
+
+#### Scenario: 移动端凭据与密码生命周期
+
+- **WHEN** Android UI 处理用户密码
+- **THEN** 密码只保存在 Composition 的 remember 状态并在提交回调前清空；MUST NOT 持久化（凭据安全存储为未来工作，见 android/README.md 未接通清单）
 
 ### Requirement: 安全脱敏
 

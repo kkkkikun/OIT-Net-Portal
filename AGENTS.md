@@ -1,6 +1,6 @@
 # AGENTS.md — OIT-Net-Portal
 
-校园网（鄂尔多斯应用技术学院）静默自动登录 + 保活工具。Python 3.9+，单代码库三端共用（Windows 计划任务 / Android Termux / Linux systemd）。
+校园网（鄂尔多斯应用技术学院）静默自动登录 + 保活工具。Python 3.9+，单代码库多端共用（Windows 计划任务 / Android Termux / Linux systemd / Android 原生 App 路线B WIP）。
 
 ## 仓库结构
 
@@ -16,13 +16,15 @@
 | `oit_portal/auth/models.py` | `AuthError` 层级（含 `retryable`）、`PortalChallenge`、`OnlineResult` |
 | `oit_portal/auth/session_store.py` | SSO cookie 落盘免密复用（`session.json`，已 gitignore） |
 | `oit_portal/protocol_overrides.py` | 把 `<配置目录>/protocol.json` 合并进 `CAPTURED` 命名空间（仅接受已有属性） |
+| `oit_portal/mobile_bridge.py` | 移动端桥接（路线B）：只暴露脱敏的探测/单次登录结果，不含 capture/daemon |
+| `oit_portal/mobile_sso.py` | 移动端首装 SSO 适配器：不读 protocol.json，仅当次页面可解析的 CryptoJS AES 表单才发加密密码，其余安全失败 |
 | `oit_portal/daemon.py` | 常驻守护循环（探活 + 保活 + 退避） |
 | `oit_portal/keepalive.py` | 心跳 |
 | `oit_portal/htmlutil.py` | HTML/内联 JS 解析（找 AES key、表单字段、接口候选） |
 | `oit_portal/platform/{windows,termux}.py` | 平台启动/守护细节（notify/wake_lock 为预留死代码，未被调用；Linux 不需要 platform/linux.py） |
 | `oit_portal/paths.py` | 跨平台路径解析（APPDATA / XDG / 便携模式 / `OIT_PORTAL_HOME`） |
 | `oit_portal/log.py` | 日志：旋转文件 + 控制台；**永不记录明文密码与完整 cookie**（只用 `fingerprint()` 记 4 位） |
-| `tests/` | 114 个用例（无网络）。`FakeSession` + 多种 fixture 状态机 |
+| `tests/` | 209 个用例（无网络）。`FakeSession` + 多种 fixture 状态机 |
 | `scripts/install_windows.ps1` | Windows 一键装（注册计划任务 + 启动） |
 | `scripts/install_termux.sh` | Termux 一键装 + 电池豁免 |
 | `scripts/install_linux.sh` | Linux 一键装（pip --user + systemd 系统服务，拒绝 root 直跑） |
@@ -31,6 +33,7 @@
 | `docs/protocol-notes.md` | 协议确认记录（待确认 / 已确认），协议变更先查这里 |
 | `docs/capture-guide.md` | 抓包向导使用说明（用户文档） |
 | `docs/linux-setup.md` | Linux 部署文档（systemd 服务、WiFi SSID 触发、故障排查） |
+| `android/` | 路线B Android 原生 App（Kotlin + Compose + Chaquopy，**WIP 未编译未真机验证**），现状清单见 `android/README.md` |
 
 ## 常用命令
 
@@ -41,7 +44,7 @@ oit-portal status                      # 探测三态
 oit-portal once                        # 完整跑一次登录流程（退出码 0/1/2/3 见 cli.py）
 oit-portal daemon                      # 守护循环
 oit-portal stop                         # 停 daemon
-python -m pytest                       # 跑全部 114 个用例（无网络）
+python -m pytest                       # 跑全部 209 个用例（无网络）
 ```
 
 依赖：`requests`、`pycryptodome`（AES-128-CBC 复现，缺失时 `sso.py` 优雅降级）、`tomli`（仅 <3.11）。
@@ -140,3 +143,4 @@ python -m pytest                       # 跑全部 114 个用例（无网络）
 - 入口跳转逻辑 → `tests/test_discover.py`（302/meta/JS 三跳路径）
 - 跨平台路径/守护 → `docs/windows-setup.md` + `docs/termux-setup.md` + `docs/linux-setup.md` + `scripts/install_*.{ps1,sh}`
 - 表单 action / hidden 字段识别 → `tests/test_htmlutil.py::test_form_action_sentinel_for_no_action` + `tests/test_discover.py::test_analyze_form_form_without_action_defaults_to_page_url`
+- 移动端桥接（路线B）→ `android/README.md`（已接通/未接通/未验证清单）+ `tests/test_mobile_bridge.py` + `tests/test_mobile_sso.py`；**纪律**：Python 返回值只按白名单映射（不透传原始异常/URL/会话），加密不确定时 fail-closed，不把 daemon/capture 能力搬进桥接

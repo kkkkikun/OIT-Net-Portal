@@ -42,7 +42,8 @@
 | requests | >=2.28 | HTTP 会话（探测/认证/心跳），所有 session 强制 trust_env=False | https://requests.readthedocs.io/ |
 | pycryptodome | >=3.18 | 复现登录页 AES-128-CBC 前端加密（可选，缺失时优雅降级） | https://www.pycryptodome.org/ |
 | tomli | >=2.0 (<3.11) | Python <3.11 时解析 config.toml / credentials.toml | https://github.com/hukkin/tomli |
-| pytest | >=7 (dev) | 测试框架，85 用例无网络 | https://docs.pytest.org/ |
+| pytest | >=7 (dev) | 测试框架，209 用例无网络 | https://docs.pytest.org/ |
+| Chaquopy | 17.1.0（android/ 专用） | 路线B Android App 内嵌 Python 运行时，按需复用仓库根 Python 核心 | https://chaquo.com/chaquopy/ |
 
 ## 项目文档索引
 
@@ -53,6 +54,7 @@
 | `docs/windows-setup.md` | 部署文档 | Windows 计划任务安装 |
 | `docs/termux-setup.md` | 部署文档 | Termux 安装 + 电池豁免 |
 | `docs/linux-setup.md` | 部署文档 | systemd 系统服务 + WiFi SSID 触发 + 故障排查 |
+| `android/README.md` | 路线B 现状文档 | Android 原生 App 已接通/明确未接通/尚未验证清单（WIP 唯一事实来源） |
 | `scripts/install_windows.ps1` | 安装脚本 | Windows 一键装 |
 | `scripts/install_termux.sh` | 安装脚本 | Termux 一键装 |
 | `AGENTS.md` | 项目指令 | 仓库结构 / 协议纪律 / 安全约束 / 已知坑（已在仓库中维护，CLAUDE.md 索引指向它） |

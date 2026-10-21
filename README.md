@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.9%2B-3776AB?logo=python&logoColor=white" alt="Python 3.9+"></a>
-  <img src="https://img.shields.io/badge/tests-114%20passed-brightgreen" alt="114 tests passed">
+  <img src="https://img.shields.io/badge/tests-209%20passed-brightgreen" alt="209 tests passed">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License"></a>
 </p>
 
@@ -37,7 +37,7 @@
 pip install -e .
 oit-portal capture     # 首次：协议自配置（校内未登录状态运行，约 2 分钟）
 oit-portal status      # online / captive / offline 三态探测
-python -m pytest       # 114 个用例（无网络）
+python -m pytest       # 209 个用例（无网络）
 ```
 
 ### 各平台一键部署
@@ -47,6 +47,8 @@ python -m pytest       # 114 个用例（无网络）
 | **Windows** | `scripts\install_windows.ps1` | 计划任务（登录自启 + 崩溃重启） | [windows-setup](docs/windows-setup.md) |
 | **Android Termux** | `bash scripts/install_termux.sh` | Termux:Boot + 电池豁免 | [termux-setup](docs/termux-setup.md) |
 | **Linux (systemd)** | `bash scripts/install_linux.sh` | 系统服务（开机自启 + 崩溃自愈） | [linux-setup](docs/linux-setup.md) |
+
+> 🚧 **Android 原生 App（路线B，开发中）**：`android/` 目录是基于 Kotlin + Jetpack Compose + Chaquopy 的原生客户端，按需复用本仓库 Python 核心，当前为未编译的 WIP 骨架（手动登录已接线，自动重连/凭据存储未实现）。现状与路线图见 [android/README.md](android/README.md)。
 
 ## 📖 命令一览
 

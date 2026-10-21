@@ -1,15 +1,25 @@
 # tasks.md — 全局任务追踪
 
-> 最后更新: 2026-10-16
+> 最后更新: 2026-10-21
 > 与 openspec/changes/ 的关系: 大改动走 `/opsx:propose` 生成 change 提案（openspec/changes/<name>/）；这里只记跨 change 的长期事项与日常待办。
 
 ## 进行中
 
-（暂无）
+### 路线B：Android 原生 App（`android/`，WIP 未编译）
+
+已接线：Compose 骨架、Chaquopy 桥接工厂、脱敏探测/单次登录桥接、手动登录（账密表单）、
+首装无 protocol.json 的 SSO 表单解析（fail-closed）、本地会话关闭、网络安全配置最小例外。
+
+未接通（按 android/README.md 清单）：
+- [ ] Capture、设置、日志查看、后台自动重连（开关保持禁用）
+- [ ] 前台 Service 接管认证流程 + 运行时通知权限 + 网络恢复回调
+- [ ] 凭据安全存储（当前每次手动登录都要输入）
+- [ ] Gradle Wrapper 生成 → 首次编译 → APK 构建
+- [ ] 真机验证：Chaquopy requests 明文限制行为、动态门户跳转、IP 字面量例外、校园网实际登录
 
 ## 待办
 
-（暂无）
+- [ ] Jetson Nano 实机端到端验证（install_linux.sh 全流程，清单见 docs/linux-setup.md）
 
 ## 阻塞项
 
@@ -17,10 +27,10 @@
 
 ## 已完成（近期）
 
-- [x] OpenSpec 项目初始化（specs 五域 + CLAUDE.md 索引）— 2026-10-16
-- [x] daemon 网络恢复 burst 探测 + WiFi SSID 触发（`337fa06`）
-- [x] Termux 日志两级降级 + 状态目录迁移（`ccc2b3c` / `a394952`）
-- [x] capture 向导支持 form 无 action / Vue 隐藏密码字段（`f596fac`）
+- [x] 移动端桥接 + 首装 SSO 适配器（`mobile_bridge.py` / `mobile_sso.py`）— 2026-10-20
+- [x] Linux（systemd）支持（daemon SSID 扩展 + install/uninstall + service 模板 + docs）— 2026-10-16（`4ce38a1`）
+- [x] OpenSpec 项目初始化（specs 五域 + CLAUDE.md 索引）— 2026-10-16（`dbb878d`）
+- [x] 品牌：SVG logo（蓝色版定稿）+ 社交预览卡 + README 重排 + MIT LICENSE — 2026-10-16（`ffa69aa`）
 
 ---
 

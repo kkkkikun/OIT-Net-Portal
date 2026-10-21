@@ -1,10 +1,10 @@
 # SNAPSHOT.md — 项目状态快照
 
-> 最后更新: 2026-10-16 | 基线测试: 114 passed (无网络)
+> 最后更新: 2026-10-21 | 基线测试: 209 passed (无网络)
 
 ## 项目概览
 
-**oit-portal** — 鄂尔多斯应用技术学院校园网静默自动登录 + 保活工具。Python 3.9+，单代码库三端共用（Windows 计划任务 / Android Termux / Linux systemd）。
+**oit-portal** — 鄂尔多斯应用技术学院校园网静默自动登录 + 保活工具。Python 3.9+，单代码库多端共用（Windows 计划任务 / Android Termux / Linux systemd），另有**路线B Android 原生 App**（`android/`，Kotlin + Compose + Chaquopy 复用 Python 核心，WIP 未编译未真机验证）。
 
 核心机制：登录协议不写死，由 `oit-portal capture` 抓包向导自动发现，写入用户配置目录 `protocol.json`，运行时合并进 `sso.py` / `eportal.py` 顶部的 `CAPTURED` 常量块（占位标签 `<CAPTURE:Cx.y>` 对应 `docs/protocol-notes.md` 编号）。
 
@@ -14,7 +14,7 @@
 |---|---|
 | 语言 | Python 3.9+ |
 | 依赖 | requests, pycryptodome (可选 AES), tomli (<3.11) |
-| 测试 | pytest，114 用例全部无网络（FakeSession + fixture 状态机） |
+| 测试 | pytest，209 用例全部无网络（FakeSession + fixture 状态机 + Android 静态契约测试） |
 | 打包 | pyproject.toml + setuptools，console_scripts: oit-portal |
 | 格式化 | 无强制工具，遵循现有代码风格 |
 
@@ -22,11 +22,11 @@
 
 - 分支: main（干净）
 - 最近提交:
-  - `337fa06` feat(daemon): 网络恢复 burst 探测 + WiFi SSID 触发
-  - `ccc2b3c` fix(termux): 日志两级降级
-  - `7e356ca` fix(termux): 日志文件不可写时不再崩
-  - `a394952` fix(paths): Termux 状态目录改 ~/.config/oit-portal/logs/
-  - `f596fac` capture 向导支持 form 无 action / Vue 隐藏密码字段
+  - `2d80439` fix(android): stage Python sources for debug build
+  - `f821231` wip(android): normalize mobile SSO redirects and preserve auth code
+  - `8cfe943` wip(android): fail closed on uncertain mobile password encryption
+  - `4368b1d` wip(android): resolve first-run SSO form without protocol file
+  - `2333cb3` feat(android): 建立 Compose 应用骨架（路线B 起点，2026-10-18）
 
 ## 目录结构
 
@@ -40,6 +40,8 @@ oit_portal/
 ├── keepalive.py            # 心跳
 ├── htmlutil.py             # HTML/内联 JS 解析（find_aes / form_action / analyze_form）
 ├── protocol_overrides.py   # protocol.json 合并进 CAPTURED（仅替换已有键）
+├── mobile_bridge.py        # 路线B 移动端桥接（脱敏探测/单次登录，无 capture/daemon）
+├── mobile_sso.py           # 移动端首装 SSO 适配器（不读 protocol.json，fail-closed 加密）
 ├── config.py / log.py / paths.py
 ├── auth/
 │   ├── flow.py             # AuthFlow.ensure_online 编排
@@ -50,7 +52,8 @@ oit_portal/
 └── platform/
     ├── windows.py          # 计划任务细节
     └── termux.py           # Termux 启动/守护 + 电池豁免
-tests/                      # 13 个测试文件
+tests/                      # 19 个测试文件（含 test_mobile_* 与 test_android_* 契约测试）
+android/                    # 路线B 原生 App（Kotlin + Compose + Chaquopy，WIP 未编译）
 scripts/                    # install_windows.ps1 / install_termux.sh / install_linux.sh
                             # uninstall_linux.sh / oit-portal.service.template / boot template
 docs/                       # protocol-notes.md / capture-guide.md / 双端部署文档
@@ -69,8 +72,9 @@ openspec/                   # OpenSpec 规范体系（specs/ + changes/）
 
 ## 当前工作
 
-- **阶段**: 协议自配置机制已完整落地并通过该校实测（form 无 action、Vue 隐藏密码字段已支持）
-- **进行中**: Linux（systemd）支持已落地（daemon SSID 扩展 + install/uninstall 脚本 + service 模板 + docs/linux-setup.md），待 Jetson Nano 实机端到端验证
+- **阶段**: 协议自配置机制已完整落地并通过该校实测；Linux（systemd）支持已落地
+- **进行中**: 路线B Android 原生 App（2026-10-18 起，12 个提交）——Compose 骨架 + Chaquopy 桥接 + 手动登录已接线；capture/自动重连/凭据存储未实现，Gradle Wrapper 未生成，未编译未真机验证（现状清单见 android/README.md）
+- **待实机验证**: Jetson Nano 端到端部署（install_linux.sh）
 - **阻塞**: 无
 
 ## 安全红线（改代码前自查）
