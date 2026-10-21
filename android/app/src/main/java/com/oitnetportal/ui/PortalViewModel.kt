@@ -6,11 +6,13 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.oitnetportal.core.ChaquopyPortalCoreBridge
 import com.oitnetportal.core.CoreUnavailableException
+import com.oitnetportal.core.CredentialStore
 import com.oitnetportal.core.LoginOutcome
 import com.oitnetportal.core.LoginResult
 import com.oitnetportal.core.PortalCoreBridge
 import com.oitnetportal.core.PortalStatus
 import com.oitnetportal.core.ProbeResult
+import com.oitnetportal.core.StoredCredentials
 import com.oitnetportal.core.UnavailablePortalCoreBridge
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -37,10 +39,17 @@ data class PortalUiState(
 
 class PortalViewModel(
     initialCore: PortalCoreBridge,
-    private val bridgeFactory: (suspend (String, String) -> ChaquopyPortalCoreBridge)? = null,
+    private val bridgeFactory: (suspend (String, String) -> PortalCoreBridge)? = null,
+    private val credentialStore: CredentialStore? = null,
 ) : ViewModel() {
     private var core: PortalCoreBridge = initialCore
     private val operationMutex = Mutex()
+
+    /**
+     * 启动时一次性读出的已记住凭据，仅用于表单预填。
+     * 不做任何自动提交：是否登录始终由用户显式点击触发。
+     */
+    val rememberedCredentials: StoredCredentials? = credentialStore?.load()
 
     @Volatile
     private var disposed = false
@@ -65,7 +74,7 @@ class PortalViewModel(
         applyLoginResult(core.loginOnce())
     }
 
-    fun loginWithCredentials(username: String, password: String) {
+    fun loginWithCredentials(username: String, password: String, remember: Boolean) {
         if (username.isBlank() || password.isBlank()) {
             _uiState.update { it.copy(notice = "请输入校园网账号和密码") }
             return
@@ -80,7 +89,7 @@ class PortalViewModel(
 
         runOperation {
             val adopted = withContext(Dispatchers.IO) {
-                var newCore: ChaquopyPortalCoreBridge? = null
+                var newCore: PortalCoreBridge? = null
                 var adopted = false
                 try {
                     val createdCore = factory(username, password)
@@ -112,7 +121,9 @@ class PortalViewModel(
                 }
             }
             if (adopted && !disposed) {
-                applyLoginResult(core.loginOnce())
+                val result = core.loginOnce()
+                applyLoginResult(result)
+                persistRememberedCredentials(username, password, remember, result)
             }
         }
     }
@@ -159,6 +170,28 @@ class PortalViewModel(
             } catch (_: Exception) {
                 // Shutdown failures are deliberately not exposed to UI or logs.
             }
+        }
+    }
+
+    /**
+     * 只有登录确认成功（LOGGED_IN/ALREADY_ONLINE）才按用户选择保存或清除凭据；
+     * 登录失败一律不动已存凭据，避免坏账密覆盖好账密。
+     */
+    private fun persistRememberedCredentials(
+        username: String,
+        password: String,
+        remember: Boolean,
+        result: LoginResult,
+    ) {
+        val store = credentialStore ?: return
+        when (result.outcome) {
+            LoginOutcome.ALREADY_ONLINE, LoginOutcome.LOGGED_IN ->
+                if (remember) {
+                    store.save(StoredCredentials(username, password))
+                } else {
+                    store.clear()
+                }
+            else -> Unit
         }
     }
 
@@ -262,10 +295,11 @@ class PortalViewModel(
 
         fun factory(
             core: PortalCoreBridge,
-            bridgeFactory: (suspend (String, String) -> ChaquopyPortalCoreBridge)? = null,
+            bridgeFactory: (suspend (String, String) -> PortalCoreBridge)? = null,
+            credentialStore: CredentialStore? = null,
         ) = viewModelFactory {
             initializer {
-                PortalViewModel(core, bridgeFactory)
+                PortalViewModel(core, bridgeFactory, credentialStore)
             }
         }
     }

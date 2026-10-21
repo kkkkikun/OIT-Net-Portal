@@ -2,12 +2,14 @@ package com.oitnetportal.ui
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -16,6 +18,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -30,16 +33,23 @@ import androidx.compose.ui.unit.dp
  * Password state is intentionally remembered only for this composition and is cleared before the
  * submit callback runs. Kotlin String cannot guarantee secure in-memory erasure; this component only
  * promises that it does not persist the password.
+ *
+ * 预填值（initialUsername/initialPassword/initialRemember）由 ViewModel 从加密存储一次性读出；
+ * 「记住密码」默认不勾选，是否加密保存凭据完全由用户显式选择。
  */
 @Composable
 fun PortalCredentialForm(
-    onSubmit: (String, String) -> Unit,
+    onSubmit: (String, String, Boolean) -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     isBusy: Boolean = false,
+    initialUsername: String = "",
+    initialPassword: String = "",
+    initialRemember: Boolean = false,
 ) {
-    var username by remember { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
+    var username by remember { mutableStateOf(initialUsername) }
+    var password by remember { mutableStateOf(initialPassword) }
+    var rememberCredentials by remember { mutableStateOf(initialRemember) }
     var showValidationErrors by remember { mutableStateOf(false) }
     val canInteract = enabled && !isBusy
 
@@ -53,7 +63,7 @@ fun PortalCredentialForm(
         password = ""
         if (usernameBlank || passwordBlank) return
 
-        onSubmit(username.trim(), submittedPassword)
+        onSubmit(username.trim(), submittedPassword, rememberCredentials)
     }
 
     Card(modifier = modifier.fillMaxWidth()) {
@@ -62,7 +72,7 @@ fun PortalCredentialForm(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text("校园网账号", style = MaterialTheme.typography.titleMedium)
-            Text("凭据仅用于本次登录；此表单不会保存密码。")
+            Text("凭据仅用于本次登录；勾选「记住密码」才会经 Android Keystore 加密后保存在本机。")
 
             OutlinedTextField(
                 value = username,
@@ -109,6 +119,20 @@ fun PortalCredentialForm(
                     onDone = { submit() },
                 ),
             )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Checkbox(
+                    checked = rememberCredentials,
+                    onCheckedChange = { rememberCredentials = it },
+                    enabled = canInteract,
+                    modifier = Modifier.semantics { contentDescription = "记住密码勾选框" },
+                )
+                Text("记住密码（仅本机加密保存，不会自动登录）")
+            }
 
             Button(
                 onClick = { submit() },

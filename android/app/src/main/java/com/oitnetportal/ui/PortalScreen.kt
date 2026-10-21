@@ -28,6 +28,7 @@ import com.oitnetportal.core.PortalStatus
 @Composable
 fun PortalApp(viewModel: PortalViewModel) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val remembered = viewModel.rememberedCredentials
 
     MaterialTheme {
         PortalScreen(
@@ -36,6 +37,9 @@ fun PortalApp(viewModel: PortalViewModel) {
             onLogin = viewModel::loginOnce,
             onCredentialsSubmit = viewModel::loginWithCredentials,
             onEndSession = viewModel::endLocalSession,
+            initialUsername = remembered?.username ?: "",
+            initialPassword = remembered?.password ?: "",
+            initialRemember = remembered != null,
         )
     }
 }
@@ -45,8 +49,11 @@ fun PortalScreen(
     state: PortalUiState,
     onRefresh: () -> Unit,
     onLogin: () -> Unit,
-    onCredentialsSubmit: (String, String) -> Unit,
+    onCredentialsSubmit: (String, String, Boolean) -> Unit,
     onEndSession: () -> Unit,
+    initialUsername: String = "",
+    initialPassword: String = "",
+    initialRemember: Boolean = false,
 ) {
     Scaffold { innerPadding ->
         Column(
@@ -74,6 +81,9 @@ fun PortalScreen(
             PortalCredentialForm(
                 onSubmit = onCredentialsSubmit,
                 isBusy = state.isBusy,
+                initialUsername = initialUsername,
+                initialPassword = initialPassword,
+                initialRemember = initialRemember,
             )
 
             Card(modifier = Modifier.fillMaxWidth()) {

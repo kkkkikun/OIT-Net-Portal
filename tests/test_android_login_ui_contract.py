@@ -29,7 +29,7 @@ def test_activity_does_not_start_python_during_oncreate():
 
 
 def test_screen_mounts_existing_credential_form():
-    assert "onCredentialsSubmit: (String, String) -> Unit" in SCREEN_SOURCE
+    assert "onCredentialsSubmit: (String, String, Boolean) -> Unit" in SCREEN_SOURCE
     assert "onCredentialsSubmit = viewModel::loginWithCredentials" in SCREEN_SOURCE
     assert "PortalCredentialForm(" in SCREEN_SOURCE
     assert "onSubmit = onCredentialsSubmit" in SCREEN_SOURCE

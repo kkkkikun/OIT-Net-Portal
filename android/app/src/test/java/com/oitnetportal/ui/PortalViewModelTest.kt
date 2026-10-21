@@ -1,12 +1,14 @@
 package com.oitnetportal.ui
 
 import com.oitnetportal.core.CaptureEngine
+import com.oitnetportal.core.CredentialStore
 import com.oitnetportal.core.DaemonEngine
 import com.oitnetportal.core.LoginOutcome
 import com.oitnetportal.core.LoginResult
 import com.oitnetportal.core.PortalCoreBridge
 import com.oitnetportal.core.PortalStatus
 import com.oitnetportal.core.ProbeResult
+import com.oitnetportal.core.StoredCredentials
 import com.oitnetportal.core.UnavailablePortalCoreBridge
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -16,6 +18,7 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import kotlinx.coroutines.withContext
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -49,6 +52,34 @@ private class FakeCoreBridge(
     override fun daemonEngine(): DaemonEngine = throw UnsupportedOperationException()
 }
 
+/** 内存假凭据存储：记录 save/clear 调用，不触碰 Keystore/磁盘。 */
+private class FakeCredentialStore(
+    private val stored: StoredCredentials? = null,
+) : CredentialStore {
+    var savedCredentials: StoredCredentials? = null
+        private set
+    var saveCallCount = 0
+        private set
+    var clearCallCount = 0
+        private set
+    var loadCallCount = 0
+        private set
+
+    override fun load(): StoredCredentials? {
+        loadCallCount++
+        return stored
+    }
+
+    override fun save(credentials: StoredCredentials) {
+        saveCallCount++
+        savedCredentials = credentials
+    }
+
+    override fun clear() {
+        clearCallCount++
+    }
+}
+
 @OptIn(ExperimentalCoroutinesApi::class)
 class PortalViewModelTest {
     @After
@@ -61,8 +92,22 @@ class PortalViewModelTest {
         Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
     }
 
-    private fun viewModel(core: PortalCoreBridge = FakeCoreBridge()) =
-        PortalViewModel(core, bridgeFactory = null)
+    private fun viewModel(
+        core: PortalCoreBridge = FakeCoreBridge(),
+        credentialStore: CredentialStore? = null,
+    ) = PortalViewModel(core, bridgeFactory = null, credentialStore = credentialStore)
+
+    /** 等待 Dispatchers.IO 上的真实线程工作落地（runTest 虚拟时钟不会等真实线程）。 */
+    private suspend fun TestScope.awaitReal(timeoutMs: Long = 5000, condition: () -> Boolean) {
+        withContext(Dispatchers.IO) {
+            val deadline = System.currentTimeMillis() + timeoutMs
+            while (!condition() && System.currentTimeMillis() < deadline) {
+                Thread.sleep(10)
+            }
+        }
+        advanceUntilIdle()
+        org.junit.Assert.assertTrue(condition())
+    }
 
     // ── 登录结果映射（缺陷一回归）──────────────────────────────
 
@@ -281,5 +326,101 @@ class PortalViewModelTest {
 
         assertEquals(1, core.probeCallCount)
         assertEquals(PortalStatus.ONLINE, vm.uiState.value.status)
+    }
+
+    // ── 凭据安全存储（记住密码）──────────────────────────────
+
+    @Test
+    fun `remembered credentials are exposed for prefill only and never auto login`() = runTest {
+        installMain()
+        val store = FakeCredentialStore(StoredCredentials("2024001", "secret"))
+        val core = FakeCoreBridge()
+        val vm = PortalViewModel(
+            core,
+            bridgeFactory = { _, _ -> core },
+            credentialStore = store,
+        )
+
+        assertEquals("2024001", vm.rememberedCredentials?.username)
+        assertEquals("secret", vm.rememberedCredentials?.password)
+        assertEquals(1, store.loadCallCount)
+        assertEquals(0, core.loginCallCount)   // 不自动登录
+        assertEquals(0, core.probeCallCount)   // 不自动探测
+        assertEquals(0, store.saveCallCount)
+    }
+
+    @Test
+    fun `successful login with remember checked saves credentials`() = runTest {
+        installMain()
+        val core = FakeCoreBridge()
+        core.loginResult = LoginResult(LoginOutcome.LOGGED_IN, "登录成功")
+        val store = FakeCredentialStore()
+        val vm = PortalViewModel(
+            UnavailablePortalCoreBridge(),
+            bridgeFactory = { _, _ -> core },
+            credentialStore = store,
+        )
+
+        vm.loginWithCredentials("2024001", "secret", remember = true)
+        awaitReal { store.saveCallCount > 0 }
+
+        assertEquals(StoredCredentials("2024001", "secret"), store.savedCredentials)
+        assertEquals(0, store.clearCallCount)
+    }
+
+    @Test
+    fun `successful login with remember unchecked clears stored credentials`() = runTest {
+        installMain()
+        val core = FakeCoreBridge()
+        core.loginResult = LoginResult(LoginOutcome.LOGGED_IN, "登录成功")
+        val store = FakeCredentialStore(StoredCredentials("old", "oldpass"))
+        val vm = PortalViewModel(
+            UnavailablePortalCoreBridge(),
+            bridgeFactory = { _, _ -> core },
+            credentialStore = store,
+        )
+
+        vm.loginWithCredentials("2024001", "secret", remember = false)
+        awaitReal { store.clearCallCount > 0 }
+
+        assertEquals(0, store.saveCallCount)
+        assertEquals(1, store.clearCallCount)
+    }
+
+    @Test
+    fun `failed login never touches stored credentials`() = runTest {
+        installMain()
+        val core = FakeCoreBridge()
+        core.loginResult = LoginResult(LoginOutcome.LOGIN_REJECTED, "账号或密码被拒绝")
+        val store = FakeCredentialStore(StoredCredentials("old", "oldpass"))
+        val vm = PortalViewModel(
+            UnavailablePortalCoreBridge(),
+            bridgeFactory = { _, _ -> core },
+            credentialStore = store,
+        )
+
+        vm.loginWithCredentials("2024001", "wrong", remember = true)
+        awaitReal { core.loginCallCount > 0 }
+        advanceUntilIdle()
+
+        assertEquals(0, store.saveCallCount)   // 失败不保存
+        assertEquals(0, store.clearCallCount)  // 失败也不清掉旧凭据
+    }
+
+    @Test
+    fun `blank credentials are rejected before touching store or bridge`() = runTest {
+        installMain()
+        val store = FakeCredentialStore()
+        val vm = PortalViewModel(
+            UnavailablePortalCoreBridge(),
+            bridgeFactory = { _, _ -> FakeCoreBridge() },
+            credentialStore = store,
+        )
+
+        vm.loginWithCredentials("", "  ", remember = true)
+        advanceUntilIdle()
+
+        assertEquals(0, store.saveCallCount)
+        assertEquals(0, store.clearCallCount)
     }
 }
