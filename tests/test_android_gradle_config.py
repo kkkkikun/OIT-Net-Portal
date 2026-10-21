@@ -24,8 +24,14 @@ def test_chaquopy_config_is_top_level_and_uses_python_310():
     assert "python {" not in android_section
 
 
-def test_python_package_install_uses_repository_root_absolute_path():
-    assert 'install(rootProject.projectDir.parentFile.absolutePath)' in APP_GRADLE
+def test_python_package_install_uses_staged_minimal_project():
+    assert 'val pythonProjectDir = layout.buildDirectory.dir("pythonProject")' in APP_GRADLE
+    assert 'tasks.register<Copy>("stagePythonProject")' in APP_GRADLE
+    assert "from(rootProject.projectDir.parentFile)" in APP_GRADLE
+    assert 'include("pyproject.toml")' in APP_GRADLE
+    assert 'include("oit_portal/**/*.py")' in APP_GRADLE
+    assert "install(pythonProjectDir.get().asFile.absolutePath)" in APP_GRADLE
+    assert "dependsOn(stagePythonProject)" in APP_GRADLE
 
 
 def test_no_literal_placeholder_path_remains():

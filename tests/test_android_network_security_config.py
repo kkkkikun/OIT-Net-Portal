@@ -48,7 +48,7 @@ def test_only_confirmed_campus_and_probe_hosts_allow_cleartext():
     for config in configs:
         assert config.get("cleartextTrafficPermitted") == "true"
         for domain in config.findall("domain"):
-            assert domain.get("includeSubdomains") != "true"
+            assert domain.get("includeSubdomains") == "false"
             hosts.add((domain.text or "").strip())
     assert hosts == EXPECTED_CLEARTEXT_HOSTS
 

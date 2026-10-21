@@ -4,10 +4,10 @@
 
     <!-- HTTP is limited to fixed hosts confirmed by the current Python configuration. -->
     <domain-config cleartextTrafficPermitted="true">
-        <domain>connect.rom.miui.com</domain>
-        <domain>captive.apple.com</domain>
-        <domain>www.qualcomm.cn</domain>
-        <domain>open.oit.edu.cn</domain>
-        <domain>172.16.11.54</domain>
+        <domain includeSubdomains="false">connect.rom.miui.com</domain>
+        <domain includeSubdomains="false">captive.apple.com</domain>
+        <domain includeSubdomains="false">www.qualcomm.cn</domain>
+        <domain includeSubdomains="false">open.oit.edu.cn</domain>
+        <domain includeSubdomains="false">172.16.11.54</domain>
     </domain-config>
 </network-security-config>

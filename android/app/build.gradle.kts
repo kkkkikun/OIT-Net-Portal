@@ -31,13 +31,29 @@ android {
     }
 }
 
+val pythonProjectDir = layout.buildDirectory.dir("pythonProject")
+
 chaquopy {
     defaultConfig {
         version = "3.10"
         pip {
-            // 模块目录为 android/app；Gradle 在配置时计算仓库根目录绝对路径。
-            install(rootProject.projectDir.parentFile.absolutePath)
+            // 仅安装构建暂存目录，避免把整个仓库根目录作为 Gradle 输入。
+            install(pythonProjectDir.get().asFile.absolutePath)
         }
+    }
+}
+
+val stagePythonProject = tasks.register<Copy>("stagePythonProject") {
+    from(rootProject.projectDir.parentFile) {
+        include("pyproject.toml")
+        include("oit_portal/**/*.py")
+    }
+    into(pythonProjectDir)
+}
+
+tasks.configureEach {
+    if (name.startsWith("install") && name.endsWith("PythonRequirements")) {
+        dependsOn(stagePythonProject)
     }
 }
 
