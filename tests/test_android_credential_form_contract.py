@@ -41,12 +41,26 @@ def test_password_state_is_cleared_before_callback():
     assert FORM_SOURCE.index(clear_password) < FORM_SOURCE.index(submit_call)
 
 
-def test_remember_checkbox_defaults_unchecked_and_prefill_is_parameterized():
+def test_save_account_checkbox_defaults_unchecked_without_prefill():
     assert "Checkbox(" in FORM_SOURCE
-    assert "rememberCredentials" in FORM_SOURCE
-    assert "initialRemember: Boolean = false" in FORM_SOURCE
-    assert "initialUsername: String = " in FORM_SOURCE
-    assert "initialPassword: String = " in FORM_SOURCE
+    assert "saveAccount" in FORM_SOURCE
+    assert "prefill?.saveAccount ?: false" in FORM_SOURCE
+    assert "保存此账号" in FORM_SOURCE
+
+
+def test_prefill_is_driven_by_nonce_and_form_keeps_no_persistence():
+    # nonce 变化驱动重新预填；表单自身不做持久化
+    assert "remember(prefill?.nonce)" in FORM_SOURCE
+    assert "prefill: PrefillCredentials? = null" in FORM_SOURCE
+
+
+def test_account_picker_shows_metadata_only():
+    assert "AccountPicker(" in FORM_SOURCE
+    assert "DropdownMenu" in FORM_SOURCE
+    assert "savedAccounts: List<AccountInfo>" in FORM_SOURCE
+    assert "onSelectAccount: (String) -> Unit" in FORM_SOURCE
+    picker_body = FORM_SOURCE.split("private fun AccountPicker", maxsplit=1)[1]
+    assert "password" not in picker_body  # 下拉列表只展示别名/用户名/绑定 SSID
 
 
 def test_form_does_not_persist_or_call_python_directly():

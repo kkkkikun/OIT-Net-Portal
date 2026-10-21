@@ -8,7 +8,8 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
-import com.oitnetportal.core.AndroidKeystoreCredentialStore
+import com.oitnetportal.core.AndroidKeystoreAccountStore
+import com.oitnetportal.core.AndroidWifiIdentityProvider
 import com.oitnetportal.core.AppSettingsStore
 import com.oitnetportal.core.ChaquopyPortalCoreBridge
 import com.oitnetportal.core.UnavailablePortalCoreBridge
@@ -23,8 +24,9 @@ class MainActivity : ComponentActivity() {
             bridgeFactory = { username, password ->
                 ChaquopyPortalCoreBridge.create(appContext, username, password)
             },
-            credentialStore = AndroidKeystoreCredentialStore(appContext),
+            accountStore = AndroidKeystoreAccountStore(appContext),
             settingsStore = AppSettingsStore(appContext),
+            wifiIdentity = AndroidWifiIdentityProvider(appContext),
         )
     }
 

@@ -1,5 +1,7 @@
 package com.oitnetportal.ui
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -18,11 +20,17 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.oitnetportal.core.AndroidWifiIdentityProvider
 import com.oitnetportal.core.PortalStatus
 
 private const val MAX_SHOWN_EVENTS = 10
@@ -30,7 +38,10 @@ private const val MAX_SHOWN_EVENTS = 10
 @Composable
 fun PortalApp(viewModel: PortalViewModel) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
-    val remembered = viewModel.rememberedCredentials
+    // Wi-Fi 名称读取权限：只在用户主动点击授权入口时发起申请
+    val wifiPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { viewModel.onWifiPermissionResult() }
 
     MaterialTheme {
         PortalScreen(
@@ -41,9 +52,12 @@ fun PortalApp(viewModel: PortalViewModel) {
             onEndSession = viewModel::endLocalSession,
             onToggleNetworkRecovery = viewModel::setAutoRefreshOnNetworkRecovery,
             onToggleForegroundRefresh = viewModel::setAutoRefreshOnForeground,
-            initialUsername = remembered?.username ?: "",
-            initialPassword = remembered?.password ?: "",
-            initialRemember = remembered != null,
+            onSelectAccount = viewModel::selectAccount,
+            onDeleteAccount = viewModel::deleteAccount,
+            onUpdateAccountMeta = viewModel::updateAccountMeta,
+            onRequestWifiPermission = {
+                wifiPermissionLauncher.launch(AndroidWifiIdentityProvider.requiredPermission())
+            },
         )
     }
 }
@@ -57,10 +71,24 @@ fun PortalScreen(
     onEndSession: () -> Unit,
     onToggleNetworkRecovery: (Boolean) -> Unit = {},
     onToggleForegroundRefresh: (Boolean) -> Unit = {},
-    initialUsername: String = "",
-    initialPassword: String = "",
-    initialRemember: Boolean = false,
+    onSelectAccount: (String) -> Unit = {},
+    onDeleteAccount: (String) -> Unit = {},
+    onUpdateAccountMeta: (String, String, String) -> Unit = { _, _, _ -> },
+    onRequestWifiPermission: () -> Unit = {},
 ) {
+    var showAccountManager by remember { mutableStateOf(false) }
+
+    if (showAccountManager) {
+        AccountManagementDialog(
+            accounts = state.savedAccounts,
+            wifiAutoMatchAvailable = state.wifiAutoMatchAvailable,
+            onRequestWifiPermission = onRequestWifiPermission,
+            onUpdateMeta = onUpdateAccountMeta,
+            onDelete = onDeleteAccount,
+            onDismiss = { showAccountManager = false },
+        )
+    }
+
     Scaffold { innerPadding ->
         Column(
             modifier = Modifier
@@ -87,9 +115,9 @@ fun PortalScreen(
             PortalCredentialForm(
                 onSubmit = onCredentialsSubmit,
                 isBusy = state.isBusy,
-                initialUsername = initialUsername,
-                initialPassword = initialPassword,
-                initialRemember = initialRemember,
+                prefill = state.prefill,
+                savedAccounts = state.savedAccounts,
+                onSelectAccount = onSelectAccount,
             )
 
             Card(modifier = Modifier.fillMaxWidth()) {
@@ -121,7 +149,15 @@ fun PortalScreen(
                     modifier = Modifier.padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    Text("会话管理", style = MaterialTheme.typography.titleMedium)
+                    Text("账号与会话", style = MaterialTheme.typography.titleMedium)
+                    OutlinedButton(
+                        onClick = { showAccountManager = true },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .semantics { contentDescription = "打开账号管理" },
+                    ) {
+                        Text("管理已保存账号（${state.savedAccounts.size}）")
+                    }
                     Text("结束本次会话只关闭应用内 Python 认证会话，不会向校园网服务器发送退出请求，也不能保证当前校园网连接立刻断开。")
                     OutlinedButton(
                         onClick = onEndSession,

@@ -70,3 +70,25 @@ def test_screen_exposes_local_session_close_without_server_logout_claim():
     assert 'Text("结束本次会话")' in SCREEN_SOURCE
     assert "不会向校园网服务器发送退出请求" in SCREEN_SOURCE
     assert SCREEN_SOURCE.count("state.coreAvailable && !state.isBusy") >= 3
+
+
+def test_screen_wires_account_management_and_prefill():
+    assert "onSelectAccount = viewModel::selectAccount" in SCREEN_SOURCE
+    assert "onDeleteAccount = viewModel::deleteAccount" in SCREEN_SOURCE
+    assert "onUpdateAccountMeta = viewModel::updateAccountMeta" in SCREEN_SOURCE
+    assert "prefill = state.prefill" in SCREEN_SOURCE
+    assert "savedAccounts = state.savedAccounts" in SCREEN_SOURCE
+    assert "AccountManagementDialog(" in SCREEN_SOURCE
+    assert "管理已保存账号" in SCREEN_SOURCE
+
+
+def test_wifi_permission_requested_only_via_user_initiated_entry():
+    assert "RequestPermission()" in SCREEN_SOURCE
+    assert "onWifiPermissionResult()" in SCREEN_SOURCE
+    assert "AndroidWifiIdentityProvider.requiredPermission()" in SCREEN_SOURCE
+    # 权限申请只发生在用户点击回调里，不在组合/启动路径自动发起
+    assert "onRequestWifiPermission = {" in SCREEN_SOURCE
+    dialog_source = (APP_SOURCE_ROOT / "ui" / "PortalAccountManager.kt").read_text(
+        encoding="utf-8")
+    assert "授权 Wi-Fi 名称读取" in dialog_source
+    assert "password" not in dialog_source  # 管理对话框只展示脱敏元数据

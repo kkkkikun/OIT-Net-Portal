@@ -123,39 +123,58 @@ def test_end_local_session_replaces_and_releases_core_safely():
     assert "disposed = true" not in body
 
 
-def test_credential_store_is_injected_and_remembered_credentials_exposed_for_prefill_only():
-    assert "private val credentialStore: CredentialStore? = null" in VIEW_MODEL_SOURCE
-    assert "val rememberedCredentials: StoredCredentials? = credentialStore?.load()" \
-        in VIEW_MODEL_SOURCE
-    # 预填之外不存在自动提交：初始化块不会调用登录
-    init_part = VIEW_MODEL_SOURCE.split("val rememberedCredentials", maxsplit=1)[1].split(
+def test_account_store_is_injected_and_prefill_is_passive():
+    assert "private val accountStore: AccountStore? = null" in VIEW_MODEL_SOURCE
+    assert "private val wifiIdentity: WifiIdentityProvider? = null" in VIEW_MODEL_SOURCE
+    assert "savedAccounts" in VIEW_MODEL_SOURCE
+    # 预填之外不存在自动提交：初始化路径不会调用登录
+    init_part = VIEW_MODEL_SOURCE.split("private fun initialUiState", maxsplit=1)[1].split(
         "fun refresh()", maxsplit=1)[0]
     assert "loginOnce" not in init_part
     assert "loginWithCredentials" not in init_part
+    assert "login_password" not in init_part
 
 
-def test_credentials_persisted_only_after_confirmed_login_success():
+def test_account_state_is_metadata_only_and_prefill_carries_nonce():
+    assert "val savedAccounts: List<AccountInfo>" in VIEW_MODEL_SOURCE
+    assert "val prefill: PrefillCredentials? = null" in VIEW_MODEL_SOURCE
+    assert "val nonce: Int" in VIEW_MODEL_SOURCE
+    assert "nextNonce()" in VIEW_MODEL_SOURCE
+
+
+def test_ssid_preselect_prefers_bound_account_then_last_used():
+    body = VIEW_MODEL_SOURCE.split("private fun choosePrefill", maxsplit=1)[1].split(
+        "private fun nextNonce", maxsplit=1)[0]
+    assert "it.boundSsid.isNotBlank() && it.boundSsid == currentSsid" in body
+    assert "loadLastUsedId()" in body
+    # SSID 绑定匹配优先于最近使用
+    assert body.index("boundSsid == currentSsid") < body.index("loadLastUsedId()")
+
+
+def test_accounts_persisted_only_after_confirmed_login_success():
     body = VIEW_MODEL_SOURCE.split(
-        "private fun persistRememberedCredentials", maxsplit=1)[1].split(
-        "private fun applyProbeResult", maxsplit=1)[0]
+        "private fun persistAccount", maxsplit=1)[1].split(
+        "private fun applyLoginResult", maxsplit=1)[0]
     assert "LoginOutcome.ALREADY_ONLINE, LoginOutcome.LOGGED_IN" in body
-    assert "store.save(StoredCredentials(username, password))" in body
-    assert "store.clear()" in body
-    assert "else -> Unit" in body  # 失败不动已存凭据
+    assert "store.upsert(" in body
+    assert "store.remove(username)" in body
+    assert "saveLastUsedId(username)" in body
+    assert "else -> Unit" in body  # 失败不动已存账号
     # 保存发生在登录结果确认之后
     login_body = _login_body()
     apply_call = "applyLoginResult(result)"
-    persist_call = "persistRememberedCredentials(username, password, remember, result)"
+    persist_call = "persistAccount(username, password, remember, result)"
     assert apply_call in login_body
     assert persist_call in login_body
     assert login_body.index(apply_call) < login_body.index(persist_call)
 
 
 def test_password_is_not_stored_by_viewmodel():
-    """凭据加密存储在独立类中，ViewModel 不得直接触碰持久化/加密 API。"""
+    """凭据加密存储在独立 core 类中，ViewModel 不得直接触碰持久化/加密 API。
+
+    注意：PrefillCredentials 内存载荷含 val password 属正常设计（仅表单预填），
+    这里只禁止持久化与加密原语。"""
     forbidden = (
-        "val password",
-        "var password",
         "SavedStateHandle",
         "SharedPreferences",
         "getSharedPreferences",

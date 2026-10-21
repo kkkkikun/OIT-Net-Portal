@@ -1,6 +1,7 @@
 package com.oitnetportal.ui
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -10,7 +11,10 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -26,6 +30,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import com.oitnetportal.core.AccountInfo
 
 /**
  * Reusable campus credential form.
@@ -34,8 +39,8 @@ import androidx.compose.ui.unit.dp
  * submit callback runs. Kotlin String cannot guarantee secure in-memory erasure; this component only
  * promises that it does not persist the password.
  *
- * 预填值（initialUsername/initialPassword/initialRemember）由 ViewModel 从加密存储一次性读出；
- * 「记住密码」默认不勾选，是否加密保存凭据完全由用户显式选择。
+ * 预填由外部传入的 prefill 载荷驱动（nonce 变化时重置字段）；账号下拉只负责回调选择，
+ * 表单自身不做任何持久化。「保存此账号」默认不勾选，是否加密保存完全由用户显式选择。
  */
 @Composable
 fun PortalCredentialForm(
@@ -43,13 +48,13 @@ fun PortalCredentialForm(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     isBusy: Boolean = false,
-    initialUsername: String = "",
-    initialPassword: String = "",
-    initialRemember: Boolean = false,
+    prefill: PrefillCredentials? = null,
+    savedAccounts: List<AccountInfo> = emptyList(),
+    onSelectAccount: (String) -> Unit = {},
 ) {
-    var username by remember { mutableStateOf(initialUsername) }
-    var password by remember { mutableStateOf(initialPassword) }
-    var rememberCredentials by remember { mutableStateOf(initialRemember) }
+    var username by remember(prefill?.nonce) { mutableStateOf(prefill?.username ?: "") }
+    var password by remember(prefill?.nonce) { mutableStateOf(prefill?.password ?: "") }
+    var saveAccount by remember(prefill?.nonce) { mutableStateOf(prefill?.saveAccount ?: false) }
     var showValidationErrors by remember { mutableStateOf(false) }
     val canInteract = enabled && !isBusy
 
@@ -63,7 +68,7 @@ fun PortalCredentialForm(
         password = ""
         if (usernameBlank || passwordBlank) return
 
-        onSubmit(username.trim(), submittedPassword, rememberCredentials)
+        onSubmit(username.trim(), submittedPassword, saveAccount)
     }
 
     Card(modifier = modifier.fillMaxWidth()) {
@@ -72,7 +77,16 @@ fun PortalCredentialForm(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text("校园网账号", style = MaterialTheme.typography.titleMedium)
-            Text("凭据仅用于本次登录；勾选「记住密码」才会经 Android Keystore 加密后保存在本机。")
+            Text("凭据仅用于本次登录；勾选「保存此账号」才会经 Android Keystore 加密后保存在本机。")
+
+            if (savedAccounts.isNotEmpty()) {
+                AccountPicker(
+                    accounts = savedAccounts,
+                    selectedId = prefill?.accountId,
+                    enabled = canInteract,
+                    onSelect = onSelectAccount,
+                )
+            }
 
             OutlinedTextField(
                 value = username,
@@ -126,12 +140,12 @@ fun PortalCredentialForm(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Checkbox(
-                    checked = rememberCredentials,
-                    onCheckedChange = { rememberCredentials = it },
+                    checked = saveAccount,
+                    onCheckedChange = { saveAccount = it },
                     enabled = canInteract,
-                    modifier = Modifier.semantics { contentDescription = "记住密码勾选框" },
+                    modifier = Modifier.semantics { contentDescription = "保存此账号勾选框" },
                 )
-                Text("记住密码（仅本机加密保存，不会自动登录）")
+                Text("保存此账号（仅本机加密保存，不会自动登录）")
             }
 
             Button(
@@ -146,3 +160,52 @@ fun PortalCredentialForm(
         }
     }
 }
+
+/** 已保存账号下拉选择器；展示别名+用户名，不展示密码。 */
+@Composable
+private fun AccountPicker(
+    accounts: List<AccountInfo>,
+    selectedId: String?,
+    enabled: Boolean,
+    onSelect: (String) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val selected = accounts.firstOrNull { it.id == selectedId }
+
+    Box(modifier = Modifier.fillMaxWidth()) {
+        OutlinedButton(
+            onClick = { expanded = true },
+            enabled = enabled,
+            modifier = Modifier
+                .fillMaxWidth()
+                .semantics { contentDescription = "选择已保存账号" },
+        ) {
+            Text(
+                selected?.let { "当前账号：${it.displayLabel()}" }
+                    ?: "选择已保存账号（${accounts.size}）",
+            )
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+        ) {
+            accounts.forEach { account ->
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            account.displayLabel() +
+                                if (account.boundSsid.isNotBlank()) "（绑定 ${account.boundSsid}）" else "",
+                        )
+                    },
+                    onClick = {
+                        expanded = false
+                        onSelect(account.id)
+                    },
+                )
+            }
+        }
+    }
+}
+
+private fun AccountInfo.displayLabel(): String =
+    if (alias.isBlank()) username else "$alias（$username）"

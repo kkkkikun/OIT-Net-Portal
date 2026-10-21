@@ -4,17 +4,20 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import com.oitnetportal.core.AccountInfo
+import com.oitnetportal.core.AccountStore
 import com.oitnetportal.core.ChaquopyPortalCoreBridge
 import com.oitnetportal.core.CoreUnavailableException
-import com.oitnetportal.core.CredentialStore
 import com.oitnetportal.core.LoginOutcome
 import com.oitnetportal.core.LoginResult
 import com.oitnetportal.core.PortalCoreBridge
 import com.oitnetportal.core.PortalStatus
 import com.oitnetportal.core.ProbeResult
 import com.oitnetportal.core.SettingsStore
-import com.oitnetportal.core.StoredCredentials
+import com.oitnetportal.core.StoredAccount
 import com.oitnetportal.core.UnavailablePortalCoreBridge
+import com.oitnetportal.core.WifiIdentityProvider
+import com.oitnetportal.core.toInfo
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -32,6 +35,15 @@ import kotlinx.coroutines.withContext
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 
+/** 表单预填载荷；nonce 单调递增驱动 Compose 重新预填，saveAccount 反映该账号已在本机保存。 */
+data class PrefillCredentials(
+    val nonce: Int,
+    val accountId: String?,
+    val username: String,
+    val password: String,
+    val saveAccount: Boolean,
+)
+
 data class PortalUiState(
     val coreAvailable: Boolean,
     val status: PortalStatus = PortalStatus.UNKNOWN,
@@ -42,38 +54,30 @@ data class PortalUiState(
     val autoRefreshOnForeground: Boolean = true,
     /** 会话内诊断事件（新事件在前，有上限），只含脱敏文本。 */
     val events: List<String> = emptyList(),
+    /** 已保存账号的脱敏元数据（不含密码）。 */
+    val savedAccounts: List<AccountInfo> = emptyList(),
+    /** 当前表单预填；null 表示空白表单。 */
+    val prefill: PrefillCredentials? = null,
+    /** 是否具备读取 Wi-Fi 名称的授权（决定能否按 SSID 自动预选账号）。 */
+    val wifiAutoMatchAvailable: Boolean = false,
 )
 
 class PortalViewModel(
     initialCore: PortalCoreBridge,
     private val bridgeFactory: (suspend (String, String) -> PortalCoreBridge)? = null,
-    private val credentialStore: CredentialStore? = null,
+    private val accountStore: AccountStore? = null,
     private val settingsStore: SettingsStore? = null,
+    private val wifiIdentity: WifiIdentityProvider? = null,
 ) : ViewModel() {
     private var core: PortalCoreBridge = initialCore
     private val operationMutex = Mutex()
 
-    /**
-     * 启动时一次性读出的已记住凭据，仅用于表单预填。
-     * 不做任何自动提交：是否登录始终由用户显式点击触发。
-     */
-    val rememberedCredentials: StoredCredentials? = credentialStore?.load()
-
     @Volatile
     private var disposed = false
 
-    private val _uiState = MutableStateFlow(
-        PortalUiState(
-            coreAvailable = initialCore.isAvailable,
-            statusDetail = when {
-                initialCore.isAvailable -> "尚未探测"
-                bridgeFactory == null -> "Python 核心桥接尚未接入；当前仅展示界面骨架。"
-                else -> "请先输入校园网账号和密码"
-            },
-            autoRefreshOnNetworkRecovery = settingsStore?.autoRefreshOnNetworkRecovery ?: true,
-            autoRefreshOnForeground = settingsStore?.autoRefreshOnForeground ?: true,
-        ),
-    )
+    private var prefillNonce = 0
+
+    private val _uiState = MutableStateFlow(initialUiState(initialCore))
     val uiState: StateFlow<PortalUiState> = _uiState.asStateFlow()
 
     init {
@@ -82,6 +86,44 @@ class PortalViewModel(
             else "应用已启动，等待输入校园网凭据"
         )
     }
+
+    private fun initialUiState(initialCore: PortalCoreBridge): PortalUiState {
+        val accounts = accountStore?.loadAccounts().orEmpty()
+        return PortalUiState(
+            coreAvailable = initialCore.isAvailable,
+            statusDetail = when {
+                initialCore.isAvailable -> "尚未探测"
+                bridgeFactory == null -> "Python 核心桥接尚未接入；当前仅展示界面骨架。"
+                else -> "请先输入校园网账号和密码"
+            },
+            autoRefreshOnNetworkRecovery = settingsStore?.autoRefreshOnNetworkRecovery ?: true,
+            autoRefreshOnForeground = settingsStore?.autoRefreshOnForeground ?: true,
+            savedAccounts = accounts.map { it.toInfo() },
+            prefill = choosePrefill(accounts),
+            wifiAutoMatchAvailable = wifiIdentity?.canReadSsid() ?: false,
+        )
+    }
+
+    /** 启动预选：当前 SSID 绑定账号优先，其次最近使用账号；不做任何自动提交。 */
+    private fun choosePrefill(accounts: List<StoredAccount>): PrefillCredentials? {
+        if (accounts.isEmpty()) return null
+        val currentSsid = wifiIdentity?.currentSsid()
+        val matched = accounts.firstOrNull {
+            it.boundSsid.isNotBlank() && it.boundSsid == currentSsid
+        }
+        val chosen = matched
+            ?: accounts.firstOrNull { it.id == accountStore?.loadLastUsedId() }
+            ?: return null
+        return PrefillCredentials(
+            nonce = nextNonce(),
+            accountId = chosen.id,
+            username = chosen.username,
+            password = chosen.password,
+            saveAccount = true,
+        )
+    }
+
+    private fun nextNonce(): Int = ++prefillNonce
 
     fun refresh() = runOperation {
         val result = core.probe()
@@ -142,7 +184,7 @@ class PortalViewModel(
             if (adopted && !disposed) {
                 val result = core.loginOnce()
                 applyLoginResult(result)
-                persistRememberedCredentials(username, password, remember, result)
+                persistAccount(username, password, remember, result)
             }
         }
     }
@@ -160,6 +202,130 @@ class PortalViewModel(
             )
         }
         releaseCore(endingCore)
+    }
+
+    // ── 账号管理 ─────────────────────────────────────────────
+
+    /** 用户从下拉列表选择账号：预填表单并记录为最近使用。 */
+    fun selectAccount(accountId: String) {
+        if (disposed) return
+        val store = accountStore ?: return
+        val account = store.loadAccounts().firstOrNull { it.id == accountId } ?: return
+        store.saveLastUsedId(account.id)
+        _uiState.update {
+            it.copy(
+                prefill = PrefillCredentials(
+                    nonce = nextNonce(),
+                    accountId = account.id,
+                    username = account.username,
+                    password = account.password,
+                    saveAccount = true,
+                ),
+            )
+        }
+        recordEvent("已选择账号：${account.alias.ifBlank { "未命名账号" }}")
+    }
+
+    fun deleteAccount(accountId: String) {
+        if (disposed) return
+        val store = accountStore ?: return
+        store.remove(accountId)
+        _uiState.update {
+            it.copy(
+                savedAccounts = store.loadAccounts().map(StoredAccount::toInfo),
+                prefill = if (it.prefill?.accountId == accountId) null else it.prefill,
+            )
+        }
+        recordEvent("已删除一个已保存账号")
+    }
+
+    /** 更新账号备注与 SSID 绑定（不允许改账密；账密变更走重新登录保存）。 */
+    fun updateAccountMeta(accountId: String, alias: String, boundSsid: String) {
+        if (disposed) return
+        val store = accountStore ?: return
+        val account = store.loadAccounts().firstOrNull { it.id == accountId } ?: return
+        store.upsert(account.copy(alias = alias.trim(), boundSsid = boundSsid.trim()))
+        _uiState.update {
+            it.copy(savedAccounts = store.loadAccounts().map(StoredAccount::toInfo))
+        }
+        recordEvent("已更新账号备注")
+    }
+
+    /** 权限申请结果回调：刷新能力标记，授权成功则立即尝试按 SSID 预选。 */
+    fun onWifiPermissionResult() {
+        if (disposed) return
+        val available = wifiIdentity?.canReadSsid() ?: false
+        _uiState.update { it.copy(wifiAutoMatchAvailable = available) }
+        recordEvent(
+            if (available) "已授权 Wi-Fi 名称读取，可按网络自动匹配账号"
+            else "未授权 Wi-Fi 名称读取，账号需手动选择"
+        )
+        if (available) {
+            preselectAccountForCurrentSsid()
+        }
+    }
+
+    /** 按当前 Wi-Fi 预选绑定账号；仅匹配结果与当前预填不同时才覆盖，避免打断输入。 */
+    private fun preselectAccountForCurrentSsid() {
+        val currentSsid = wifiIdentity?.currentSsid() ?: return
+        val matched = accountStore?.loadAccounts()
+            ?.firstOrNull { it.boundSsid.isNotBlank() && it.boundSsid == currentSsid }
+            ?: return
+        if (_uiState.value.prefill?.accountId == matched.id) return
+        _uiState.update {
+            it.copy(
+                prefill = PrefillCredentials(
+                    nonce = nextNonce(),
+                    accountId = matched.id,
+                    username = matched.username,
+                    password = matched.password,
+                    saveAccount = true,
+                ),
+            )
+        }
+        recordEvent("已按当前 Wi-Fi 预选账号：${matched.alias.ifBlank { "未命名账号" }}")
+    }
+
+    /**
+     * 只有登录确认成功（LOGGED_IN/ALREADY_ONLINE）才按用户选择保存或删除账号；
+     * 登录失败一律不动已存账号，避免坏账密覆盖好账密。
+     */
+    private fun persistAccount(
+        username: String,
+        password: String,
+        remember: Boolean,
+        result: LoginResult,
+    ) {
+        val store = accountStore ?: return
+        when (result.outcome) {
+            LoginOutcome.ALREADY_ONLINE, LoginOutcome.LOGGED_IN -> {
+                if (remember) {
+                    val existing = store.loadAccounts().firstOrNull { it.id == username }
+                    val currentSsid = wifiIdentity?.currentSsid() ?: ""
+                    store.upsert(
+                        StoredAccount(
+                            id = username,
+                            alias = existing?.alias ?: "",
+                            username = username,
+                            password = password,
+                            boundSsid = existing?.boundSsid?.ifBlank { currentSsid }
+                                ?: currentSsid,
+                        ),
+                    )
+                    store.saveLastUsedId(username)
+                    _uiState.update {
+                        it.copy(savedAccounts = store.loadAccounts().map(StoredAccount::toInfo))
+                    }
+                    recordEvent("已保存账号到本机加密存储")
+                } else {
+                    store.remove(username)
+                    _uiState.update {
+                        it.copy(savedAccounts = store.loadAccounts().map(StoredAccount::toInfo))
+                    }
+                }
+            }
+            else -> Unit
+        }
     }
 
     private fun applyLoginResult(result: LoginResult) {
@@ -194,28 +360,6 @@ class PortalViewModel(
         }
     }
 
-    /**
-     * 只有登录确认成功（LOGGED_IN/ALREADY_ONLINE）才按用户选择保存或清除凭据；
-     * 登录失败一律不动已存凭据，避免坏账密覆盖好账密。
-     */
-    private fun persistRememberedCredentials(
-        username: String,
-        password: String,
-        remember: Boolean,
-        result: LoginResult,
-    ) {
-        val store = credentialStore ?: return
-        when (result.outcome) {
-            LoginOutcome.ALREADY_ONLINE, LoginOutcome.LOGGED_IN ->
-                if (remember) {
-                    store.save(StoredCredentials(username, password))
-                } else {
-                    store.clear()
-                }
-            else -> Unit
-        }
-    }
-
     private fun applyProbeResult(result: ProbeResult) {
         _uiState.update {
             it.copy(
@@ -236,11 +380,13 @@ class PortalViewModel(
     }
 
     /**
-     * 默认网络恢复或能力变化：做一次有界重试的状态探测。
+     * 默认网络恢复或能力变化：先按 SSID 预选账号，再做一次有界重试的状态探测。
      * 只探测，不提交凭据、不自动登录；本地会话已结束（coreAvailable=false）时静默跳过。
      */
     fun onNetworkAvailable() {
-        if (disposed || !_uiState.value.coreAvailable) return
+        if (disposed) return
+        preselectAccountForCurrentSsid()
+        if (!_uiState.value.coreAvailable) return
         if (!_uiState.value.autoRefreshOnNetworkRecovery) return
         recordEvent("检测到网络恢复，开始状态校准")
         runOperation {
@@ -346,11 +492,12 @@ class PortalViewModel(
         fun factory(
             core: PortalCoreBridge,
             bridgeFactory: (suspend (String, String) -> PortalCoreBridge)? = null,
-            credentialStore: CredentialStore? = null,
+            accountStore: AccountStore? = null,
             settingsStore: SettingsStore? = null,
+            wifiIdentity: WifiIdentityProvider? = null,
         ) = viewModelFactory {
             initializer {
-                PortalViewModel(core, bridgeFactory, credentialStore, settingsStore)
+                PortalViewModel(core, bridgeFactory, accountStore, settingsStore, wifiIdentity)
             }
         }
     }
