@@ -12,6 +12,7 @@ import com.oitnetportal.core.LoginResult
 import com.oitnetportal.core.PortalCoreBridge
 import com.oitnetportal.core.PortalStatus
 import com.oitnetportal.core.ProbeResult
+import com.oitnetportal.core.SettingsStore
 import com.oitnetportal.core.StoredCredentials
 import com.oitnetportal.core.UnavailablePortalCoreBridge
 import kotlinx.coroutines.CancellationException
@@ -28,6 +29,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.time.LocalTime
+import java.time.format.DateTimeFormatter
 
 data class PortalUiState(
     val coreAvailable: Boolean,
@@ -35,12 +38,17 @@ data class PortalUiState(
     val statusDetail: String,
     val isBusy: Boolean = false,
     val notice: String? = null,
+    val autoRefreshOnNetworkRecovery: Boolean = true,
+    val autoRefreshOnForeground: Boolean = true,
+    /** 会话内诊断事件（新事件在前，有上限），只含脱敏文本。 */
+    val events: List<String> = emptyList(),
 )
 
 class PortalViewModel(
     initialCore: PortalCoreBridge,
     private val bridgeFactory: (suspend (String, String) -> PortalCoreBridge)? = null,
     private val credentialStore: CredentialStore? = null,
+    private val settingsStore: SettingsStore? = null,
 ) : ViewModel() {
     private var core: PortalCoreBridge = initialCore
     private val operationMutex = Mutex()
@@ -62,12 +70,23 @@ class PortalViewModel(
                 bridgeFactory == null -> "Python 核心桥接尚未接入；当前仅展示界面骨架。"
                 else -> "请先输入校园网账号和密码"
             },
+            autoRefreshOnNetworkRecovery = settingsStore?.autoRefreshOnNetworkRecovery ?: true,
+            autoRefreshOnForeground = settingsStore?.autoRefreshOnForeground ?: true,
         ),
     )
     val uiState: StateFlow<PortalUiState> = _uiState.asStateFlow()
 
+    init {
+        recordEvent(
+            if (initialCore.isAvailable) "Python 核心桥接已就绪"
+            else "应用已启动，等待输入校园网凭据"
+        )
+    }
+
     fun refresh() = runOperation {
-        applyProbeResult(core.probe())
+        val result = core.probe()
+        applyProbeResult(result)
+        recordEvent("手动刷新：${result.status}")
     }
 
     fun loginOnce() = runOperation {
@@ -129,6 +148,7 @@ class PortalViewModel(
     }
 
     fun endLocalSession() = runOperation {
+        recordEvent("用户结束本地会话")
         val endingCore = core
         core = UnavailablePortalCoreBridge()
         _uiState.update {
@@ -143,6 +163,7 @@ class PortalViewModel(
     }
 
     private fun applyLoginResult(result: LoginResult) {
+        recordEvent("登录结果：${result.outcome}")
         _uiState.update {
             it.copy(
                 status = when (result.outcome) {
@@ -207,6 +228,7 @@ class PortalViewModel(
     /** 默认网络断开：直接反映离线，不触碰 Python 桥接。 */
     fun onNetworkLost() {
         if (disposed) return
+        recordEvent("网络连接已断开")
         _uiState.update {
             if (it.status == PortalStatus.OFFLINE) it
             else it.copy(status = PortalStatus.OFFLINE, statusDetail = "网络连接已断开")
@@ -219,12 +241,15 @@ class PortalViewModel(
      */
     fun onNetworkAvailable() {
         if (disposed || !_uiState.value.coreAvailable) return
+        if (!_uiState.value.autoRefreshOnNetworkRecovery) return
+        recordEvent("检测到网络恢复，开始状态校准")
         runOperation {
             var attempt = 0
             while (attempt < NETWORK_RECOVERY_MAX_ATTEMPTS) {
                 attempt++
                 val result = core.probe()
                 applyProbeResult(result)
+                recordEvent("网络恢复校准（第 $attempt 次）：${result.status}")
                 // ONLINE/CAPTIVE 是确定结论；OFFLINE/UNKNOWN 可能是门户未就绪的瞬态
                 if (result.status == PortalStatus.ONLINE ||
                     result.status == PortalStatus.CAPTIVE ||
@@ -237,10 +262,31 @@ class PortalViewModel(
         }
     }
 
-    /** 回到前台：单次状态探测；本地会话已结束时静默跳过。 */
+    /** 回到前台：单次状态探测；本地会话已结束或用户关闭时静默跳过。 */
     fun onAppForeground() {
         if (disposed || !_uiState.value.coreAvailable) return
+        if (!_uiState.value.autoRefreshOnForeground) return
         refresh()
+    }
+
+    fun setAutoRefreshOnNetworkRecovery(enabled: Boolean) {
+        if (disposed) return
+        settingsStore?.autoRefreshOnNetworkRecovery = enabled
+        _uiState.update { it.copy(autoRefreshOnNetworkRecovery = enabled) }
+        recordEvent(if (enabled) "已开启网络恢复自动刷新" else "已关闭网络恢复自动刷新")
+    }
+
+    fun setAutoRefreshOnForeground(enabled: Boolean) {
+        if (disposed) return
+        settingsStore?.autoRefreshOnForeground = enabled
+        _uiState.update { it.copy(autoRefreshOnForeground = enabled) }
+        recordEvent(if (enabled) "已开启前台自动刷新" else "已关闭前台自动刷新")
+    }
+
+    /** 记录一条脱敏诊断事件；调用方负责不传入凭据/URL/异常原文。 */
+    private fun recordEvent(message: String) {
+        val stamped = "${LocalTime.now().format(EVENT_TIME_FORMAT)} $message"
+        _uiState.update { it.copy(events = (listOf(stamped) + it.events).take(MAX_EVENTS)) }
     }
 
     private fun runOperation(operation: suspend () -> Unit) {
@@ -293,13 +339,18 @@ class PortalViewModel(
         private const val NETWORK_RECOVERY_MAX_ATTEMPTS = 3
         private const val NETWORK_RECOVERY_DELAY_MS = 2000L
 
+        /** 诊断事件缓冲上限：会话内保留最近 50 条。 */
+        private const val MAX_EVENTS = 50
+        private val EVENT_TIME_FORMAT = DateTimeFormatter.ofPattern("HH:mm:ss")
+
         fun factory(
             core: PortalCoreBridge,
             bridgeFactory: (suspend (String, String) -> PortalCoreBridge)? = null,
             credentialStore: CredentialStore? = null,
+            settingsStore: SettingsStore? = null,
         ) = viewModelFactory {
             initializer {
-                PortalViewModel(core, bridgeFactory, credentialStore)
+                PortalViewModel(core, bridgeFactory, credentialStore, settingsStore)
             }
         }
     }

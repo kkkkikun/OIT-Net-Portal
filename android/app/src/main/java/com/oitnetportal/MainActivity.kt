@@ -9,6 +9,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import com.oitnetportal.core.AndroidKeystoreCredentialStore
+import com.oitnetportal.core.AppSettingsStore
 import com.oitnetportal.core.ChaquopyPortalCoreBridge
 import com.oitnetportal.core.UnavailablePortalCoreBridge
 import com.oitnetportal.ui.PortalApp
@@ -23,6 +24,7 @@ class MainActivity : ComponentActivity() {
                 ChaquopyPortalCoreBridge.create(appContext, username, password)
             },
             credentialStore = AndroidKeystoreCredentialStore(appContext),
+            settingsStore = AppSettingsStore(appContext),
         )
     }
 

@@ -25,6 +25,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.oitnetportal.core.PortalStatus
 
+private const val MAX_SHOWN_EVENTS = 10
+
 @Composable
 fun PortalApp(viewModel: PortalViewModel) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -37,6 +39,8 @@ fun PortalApp(viewModel: PortalViewModel) {
             onLogin = viewModel::loginOnce,
             onCredentialsSubmit = viewModel::loginWithCredentials,
             onEndSession = viewModel::endLocalSession,
+            onToggleNetworkRecovery = viewModel::setAutoRefreshOnNetworkRecovery,
+            onToggleForegroundRefresh = viewModel::setAutoRefreshOnForeground,
             initialUsername = remembered?.username ?: "",
             initialPassword = remembered?.password ?: "",
             initialRemember = remembered != null,
@@ -51,6 +55,8 @@ fun PortalScreen(
     onLogin: () -> Unit,
     onCredentialsSubmit: (String, String, Boolean) -> Unit,
     onEndSession: () -> Unit,
+    onToggleNetworkRecovery: (Boolean) -> Unit = {},
+    onToggleForegroundRefresh: (Boolean) -> Unit = {},
     initialUsername: String = "",
     initialPassword: String = "",
     initialRemember: Boolean = false,
@@ -152,20 +158,41 @@ fun PortalScreen(
                     modifier = Modifier.padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    Text("协议与配置", style = MaterialTheme.typography.titleMedium)
-                    OutlinedButton(
-                        onClick = {},
-                        enabled = false,
+                    Text("设置", style = MaterialTheme.typography.titleMedium)
+                    Row(
                         modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(16.dp),
                     ) {
-                        Text("协议 Capture（待接入）")
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("网络恢复时自动刷新", style = MaterialTheme.typography.titleSmall)
+                            Text("Wi-Fi 恢复后自动校准连接状态，不会自动登录")
+                        }
+                        Switch(
+                            checked = state.autoRefreshOnNetworkRecovery,
+                            onCheckedChange = onToggleNetworkRecovery,
+                        )
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("回到前台时自动刷新", style = MaterialTheme.typography.titleSmall)
+                            Text("应用回到前台时探测一次连接状态")
+                        }
+                        Switch(
+                            checked = state.autoRefreshOnForeground,
+                            onCheckedChange = onToggleForegroundRefresh,
+                        )
                     }
                     OutlinedButton(
                         onClick = {},
                         enabled = false,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Text("设置（待实现）")
+                        Text("协议 Capture（待接入）")
                     }
                 }
             }
@@ -175,8 +202,21 @@ fun PortalScreen(
                     modifier = Modifier.padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Text("日志与错误", style = MaterialTheme.typography.titleMedium)
-                    Text(state.notice ?: "暂无诊断事件；文件日志查看尚未接入。")
+                    Text("诊断事件", style = MaterialTheme.typography.titleMedium)
+                    state.notice?.let { Text(it) }
+                    if (state.events.isEmpty()) {
+                        Text("暂无诊断事件；事件仅保留本次会话内的最近 50 条，均为脱敏文本。")
+                    } else {
+                        state.events.take(MAX_SHOWN_EVENTS).forEach { event ->
+                            Text(event, style = MaterialTheme.typography.bodySmall)
+                        }
+                        if (state.events.size > MAX_SHOWN_EVENTS) {
+                            Text(
+                                "… 共 ${state.events.size} 条，仅展示最新 $MAX_SHOWN_EVENTS 条",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                    }
                 }
             }
         }

@@ -8,6 +8,7 @@ import com.oitnetportal.core.LoginResult
 import com.oitnetportal.core.PortalCoreBridge
 import com.oitnetportal.core.PortalStatus
 import com.oitnetportal.core.ProbeResult
+import com.oitnetportal.core.SettingsStore
 import com.oitnetportal.core.StoredCredentials
 import com.oitnetportal.core.UnavailablePortalCoreBridge
 import kotlinx.coroutines.Dispatchers
@@ -79,6 +80,12 @@ private class FakeCredentialStore(
         clearCallCount++
     }
 }
+
+/** 内存假设置存储：记录读写，不触碰磁盘。 */
+private class FakeSettingsStore(
+    override var autoRefreshOnNetworkRecovery: Boolean = true,
+    override var autoRefreshOnForeground: Boolean = true,
+) : SettingsStore
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class PortalViewModelTest {
@@ -422,5 +429,100 @@ class PortalViewModelTest {
 
         assertEquals(0, store.saveCallCount)
         assertEquals(0, store.clearCallCount)
+    }
+
+    // ── 设置开关与诊断事件 ───────────────────────────────
+
+    @Test
+    fun `network recovery probe is skipped when setting disabled`() = runTest {
+        installMain()
+        val core = FakeCoreBridge()
+        core.probeResponses.add(ProbeResult(PortalStatus.ONLINE, "网络已连接"))
+        val vm = PortalViewModel(core, settingsStore = FakeSettingsStore(
+            autoRefreshOnNetworkRecovery = false,
+        ))
+
+        vm.onNetworkAvailable()
+        advanceUntilIdle()
+
+        assertEquals(0, core.probeCallCount)
+    }
+
+    @Test
+    fun `foreground probe is skipped when setting disabled`() = runTest {
+        installMain()
+        val core = FakeCoreBridge()
+        core.probeResponses.add(ProbeResult(PortalStatus.ONLINE, "网络已连接"))
+        val vm = PortalViewModel(core, settingsStore = FakeSettingsStore(
+            autoRefreshOnForeground = false,
+        ))
+
+        vm.onAppForeground()
+        advanceUntilIdle()
+
+        assertEquals(0, core.probeCallCount)
+    }
+
+    @Test
+    fun `toggle setters persist to store and update state`() = runTest {
+        installMain()
+        val store = FakeSettingsStore()
+        val vm = PortalViewModel(FakeCoreBridge(), settingsStore = store)
+
+        vm.setAutoRefreshOnNetworkRecovery(false)
+        vm.setAutoRefreshOnForeground(false)
+
+        assertEquals(false, store.autoRefreshOnNetworkRecovery)
+        assertEquals(false, store.autoRefreshOnForeground)
+        assertEquals(false, vm.uiState.value.autoRefreshOnNetworkRecovery)
+        assertEquals(false, vm.uiState.value.autoRefreshOnForeground)
+        // 重新构造（模拟重启）后设置保持
+        val vm2 = PortalViewModel(FakeCoreBridge(), settingsStore = store)
+        assertEquals(false, vm2.uiState.value.autoRefreshOnNetworkRecovery)
+        assertEquals(false, vm2.uiState.value.autoRefreshOnForeground)
+    }
+
+    @Test
+    fun `diagnostic events are recorded for login refresh and network changes`() = runTest {
+        installMain()
+        val core = FakeCoreBridge()
+        core.probeResponses.add(ProbeResult(PortalStatus.ONLINE, "网络已连接"))
+        core.loginResult = LoginResult(LoginOutcome.LOGGED_IN, "登录成功")
+        val vm = viewModel(core)
+
+        vm.refresh()
+        vm.loginOnce()
+        vm.onNetworkLost()
+        advanceUntilIdle()
+
+        val events = vm.uiState.value.events
+        assertTrue(events.any { it.contains("手动刷新") })
+        assertTrue(events.any { it.contains("登录结果") })
+        assertTrue(events.any { it.contains("网络连接已断开") })
+    }
+
+    @Test
+    fun `diagnostic events are bounded and never contain credentials`() = runTest {
+        installMain()
+        val core = FakeCoreBridge()
+        repeat(80) { core.probeResponses.add(ProbeResult(PortalStatus.ONLINE, "网络已连接")) }
+        core.loginResult = LoginResult(LoginOutcome.LOGGED_IN, "登录成功")
+        val store = FakeCredentialStore()
+        val vm = PortalViewModel(
+            UnavailablePortalCoreBridge(),
+            bridgeFactory = { _, _ -> core },
+            credentialStore = store,
+        )
+
+        vm.loginWithCredentials("2024001", "secret", remember = true)
+        awaitReal { core.loginCallCount > 0 }
+        repeat(60) {
+            vm.refresh()
+        }
+        advanceUntilIdle()
+
+        val events = vm.uiState.value.events
+        assertTrue(events.size <= 50)
+        assertTrue(events.none { it.contains("secret") || it.contains("2024001") })
     }
 }
