@@ -1,6 +1,6 @@
 # SNAPSHOT.md — 项目状态快照
 
-> 最后更新: 2026-10-21 | 基线测试: 246 passed (无网络) + Android testDebugUnitTest 31 例
+> 最后更新: 2026-10-22 | 基线测试: 252 passed (无网络) + Android testDebugUnitTest 31 例
 
 ## 项目概览
 
@@ -14,7 +14,7 @@
 |---|---|
 | 语言 | Python 3.9+ |
 | 依赖 | requests, pycryptodome (可选 AES), tomli (<3.11) |
-| 测试 | pytest，246 用例全部无网络（FakeSession + fixture 状态机 + Android 静态契约测试）；Android 另有 31 例 ViewModel JUnit 单测 |
+| 测试 | pytest，252 用例全部无网络（FakeSession + fixture 状态机 + Android 静态契约测试）；Android 另有 31 例 ViewModel JUnit 单测 |
 | 打包 | pyproject.toml + setuptools，console_scripts: oit-portal |
 | 格式化 | 无强制工具，遵循现有代码风格 |
 

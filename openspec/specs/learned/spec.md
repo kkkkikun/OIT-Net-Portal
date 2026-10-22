@@ -116,3 +116,15 @@ probe.py 用 online / captive / offline 三态 + 多探测点双确认，避免�
 | `docs/protocol-notes.md` | 协议确认记录（C1/C2/C3/C4 编号），改协议前必读 |
 | `tests/test_capture_wizard.py` | 向导回归用例（10 种场景 fixture） |
 | `tests/test_discover.py` | 三种跳转路径覆盖 |
+
+## 踩坑：学生网 AC gzip 漏标 Content-Encoding（2026-10-22，真机实测）
+
+**现象**：Android 端登录 OIT-XUESHENG 时 ePortal 判定 FAILED，logcat 中响应体为乱码。
+**根因**：学生网侧 AC 返回 gzip 压缩体但漏标 Content-Encoding 头（gzip 魔数 1F 8B 可辨）；
+桌面端因装有 brotli，协商路径不同所以从未触发。乱码导致 success_markers 漏判 → FAILED →
+账号按 fail-closed 不保存（用户感知为"账号管理没存上"）。
+**修复**：`eportal._response_text()` 检测 gzip 魔数手动解压，解压体按 utf-8→gb18030 以成功标记
+命中为准选择编码；FakeResponse 无 content 属性，`getattr(resp, "content", b"")` 兜底。
+**教训**：① 移动端/桌面端依赖集合不同（brotli 有无）会导致同一 AC 行为分叉；
+② fail-closed 的静默 catch 要配可见的诊断出口（事件日志/notice），否则用户无法区分
+"登录失败没存"与"保存功能坏了"。

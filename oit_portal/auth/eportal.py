@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import gzip
 import re
 from types import SimpleNamespace
 
@@ -45,6 +46,32 @@ CAPTURED = SimpleNamespace(
 
 def _sub_placeholders(text: str) -> bool:
     return "<CAPTURE" in text
+
+
+_GZIP_MAGIC = b"\x1f\x8b"
+
+
+def _response_text(resp: requests.Response) -> str:
+    """取判定用响应文本。
+
+    实测学生网（OIT-XUESHENG）侧 AC 会返回 gzip 压缩体却漏标 Content-Encoding，
+    requests 无法自动解码，直接读 text 得到乱码导致成功标记漏判。
+    检测 gzip 魔数手动解压；解压体按 utf-8 → gb18030 顺序解码，以成功标记命中为准。
+    """
+    content = getattr(resp, "content", b"") or b""
+    if content[:2] != _GZIP_MAGIC:
+        return resp.text
+    try:
+        content = gzip.decompress(content)
+    except (OSError, EOFError):
+        logger.warning("ePortal 响应疑似 gzip 但解压失败，按原始文本判定")
+        return resp.text
+    logger.warning("ePortal 响应为漏标 Content-Encoding 的 gzip 体，已手动解压判定")
+    candidates = [content.decode(enc, errors="replace") for enc in ("utf-8", "gb18030")]
+    for text in candidates:
+        if any(marker in text for marker in CAPTURED.success_markers):
+            return text
+    return candidates[0]
 
 
 class EportalAdapter:
@@ -90,7 +117,7 @@ class EportalAdapter:
         return self._judge(resp, mode="interface_do")
 
     def _judge(self, resp: requests.Response, *, mode: str) -> OnlineResult:
-        body = resp.text[:8192]
+        body = _response_text(resp)[:8192]
         user_index = keepalive = None
         m = re.search(CAPTURED.user_index_pattern, body)
         if m:

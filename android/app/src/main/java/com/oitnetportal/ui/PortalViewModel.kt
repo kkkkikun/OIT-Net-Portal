@@ -314,7 +314,10 @@ class PortalViewModel(
                     )
                     store.saveLastUsedId(username)
                     _uiState.update {
-                        it.copy(savedAccounts = store.loadAccounts().map(StoredAccount::toInfo))
+                        it.copy(
+                            savedAccounts = store.loadAccounts().map(StoredAccount::toInfo),
+                            notice = "账号已保存到本机加密存储",
+                        )
                     }
                     recordEvent("已保存账号到本机加密存储")
                 } else {
