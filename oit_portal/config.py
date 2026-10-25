@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -130,3 +132,45 @@ def _validate(cfg: Config) -> None:
         raise ValueError("probe.urls 不能为空")
     if cfg.retry.backoff_base_sec <= 0 or cfg.retry.max_attempts <= 0:
         raise ValueError("retry 参数必须为正数")
+
+
+def _toml_string(value: str) -> str:
+    return json.dumps(value, ensure_ascii=False)
+
+
+def save_account(config_path: Path, credentials_path: Path,
+                 username: str, password: str) -> None:
+    username = username.strip()
+    if not username or not password:
+        raise ValueError("账号和密码不能为空")
+
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    lines = (config_path.read_text(encoding="utf-8")
+             if config_path.is_file() else "").splitlines(keepends=True)
+    section = None
+    account_start = account_end = None
+    username_index = None
+    for index, line in enumerate(lines):
+        match = re.match(r"^\s*\[([^]]+)\]", line)
+        if match:
+            if section == "account" and account_end is None:
+                account_end = index
+            section = match.group(1).strip()
+            if section == "account":
+                account_start = index
+        elif section == "account" and re.match(r"^\s*username\s*=", line):
+            username_index = index
+    if section == "account" and account_start is not None:
+        account_end = len(lines)
+
+    entry = f"username = {_toml_string(username)}\n"
+    if username_index is not None:
+        lines[username_index] = entry
+    elif account_start is not None and account_end is not None:
+        lines.insert(account_start + 1, entry)
+    else:
+        lines[0:0] = ["[account]\n", entry, "\n"]
+    config_path.write_text("".join(lines), encoding="utf-8")
+    credentials_path.parent.mkdir(parents=True, exist_ok=True)
+    credentials_path.write_text(
+        f"password = {_toml_string(password)}\n", encoding="utf-8")

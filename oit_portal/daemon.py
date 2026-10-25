@@ -8,7 +8,9 @@ import subprocess
 import sys
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 import requests
 
@@ -168,18 +170,53 @@ def _wifi_ssid_watcher(cfg: Config, stop: threading.Event,
     logger.info("WiFi SSID watcher 退出")
 
 
-def run_daemon(cfg: Config, paths: AppPaths) -> int:
+@dataclass(frozen=True)
+class DaemonEvent:
+    state: str
+    detail: str = ""
+    outcome: FlowOutcome | None = None
+
+
+def _emit(callback: Callable[[DaemonEvent], None] | None, event: DaemonEvent) -> None:
+    if callback is None:
+        return
+    try:
+        callback(event)
+    except Exception:  # noqa: BLE001 - UI 回调不能拖垮守护
+        logger.exception("daemon 状态回调异常")
+
+
+def _wait_for_next_run(stop: threading.Event, wake: threading.Event | None,
+                       delay: float) -> None:
+    if wake is None:
+        stop.wait(delay)
+        return
+    deadline = time.monotonic() + delay
+    while not stop.is_set():
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return
+        if wake.wait(min(remaining, 0.2)):
+            wake.clear()
+            return
+
+
+def run_daemon(cfg: Config, paths: AppPaths, *,
+               stop_event: threading.Event | None = None,
+               wake_event: threading.Event | None = None,
+               on_update: Callable[[DaemonEvent], None] | None = None) -> int:
     lock = SingleInstanceLock(paths.lock)
     if not lock.acquire():
         # 返回 0 而非 1：systemd Restart=on-failure 下退出码 1 会被当
         # 崩溃无限重启；「已有实例在跑」对服务管理器而言目标已达成。
         # 副作用：手动跑第二个 `oit-portal daemon` 的退出码从 1 变 0（见文档）。
         logger.error("已有 oit-portal 实例在运行（锁 %s），退出", paths.lock)
+        _emit(on_update, DaemonEvent("error", "已有另一个自动登录实例在运行"))
         return 0
     _write_pid(paths.pid)
     logger.info("daemon 启动（pid=%s，配置=%s）", os.getpid(), paths.config)
 
-    stop = threading.Event()
+    stop = stop_event or threading.Event()
 
     def _on_signal(signum, _frame):
         logger.info("收到信号 %s，准备退出", signum)
@@ -191,106 +228,114 @@ def run_daemon(cfg: Config, paths: AppPaths) -> int:
         except (ValueError, OSError):  # 非主线程 / 平台不支持
             pass
 
-    session = requests.Session()
-    session.headers["User-Agent"] = cfg.advanced.user_agent
-    session.trust_env = False  # 探测/认证直连，不走系统代理
-    from .auth import session_store
-    session_store.load(session, paths.session)
-
-    flow = AuthFlow(session, cfg, session_path=paths.session)
-    policy = KeepalivePolicy(cfg)
-
-    # WiFi SSID watcher 触发 burst（Termux / Linux）
-    on_campus = threading.Event()
-    watcher: threading.Thread | None = None
-    if _ssid_probe_supported() and cfg.probe.wifi_ssid.strip():
-        watcher = threading.Thread(
-            target=_wifi_ssid_watcher,
-            args=(cfg, stop, on_campus),
-            name="wifi-ssid-watcher",
-            daemon=True,
-        )
-        watcher.start()
-
-    consecutive_failures = 0
-    online_since: float | None = None
-    last_password_login: float | None = None
-    last_keepalive = 0.0
-    last_outcome: FlowOutcome | None = None
-
-    while not stop.is_set():
-        # SSID 触发：连接上校园网时立即 mark_recovery 进入 burst
-        if on_campus.is_set():
-            on_campus.clear()
-            policy.mark_recovery()
-
-        allow_password = (cfg.password is not None
-                          and policy.allow_password(last_password_login))
-        try:
-            result = flow.ensure_online(allow_password=allow_password)
-        except Exception:  # noqa: BLE001 - 兜底，守护永不崩
-            logger.exception("ensure_online 未捕获异常")
-            result = None
-
-        now = time.time()
-        if result is None:
-            consecutive_failures += 1
-            outcome = FlowOutcome.FAILED
-        else:
-            outcome = result.outcome
-            if outcome in (FlowOutcome.LOGGED_IN, FlowOutcome.ALREADY_ONLINE):
-                if outcome is FlowOutcome.LOGGED_IN and result.via == "password":
-                    last_password_login = now
-                if online_since is None:
-                    online_since = now
-                consecutive_failures = 0
-            else:
-                consecutive_failures += 1
-                if online_since is not None:
-                    logger.warning("网络中断（%s: %s），进入重登流程",
-                                   outcome.value, result.detail)
-                online_since = None
-
-        # 状态迁移 + 网络恢复检测 → 触发 burst 窗口
-        if outcome != last_outcome:
-            if (last_outcome is FlowOutcome.NO_NETWORK
-                    and outcome is not FlowOutcome.NO_NETWORK):
-                policy.mark_recovery()
-                logger.info("网络恢复，开启 burst 探测窗口（%ds，每 %ds 探一次）",
-                            cfg.probe.recovery_burst_sec,
-                            cfg.probe.recovery_burst_interval_sec)
-            level = logger.info
-            if consecutive_failures >= cfg.retry.max_attempts:
-                level = logger.error
-                level("连续失败 %d 次（最新：%s %s）。深度退避 %ss。"
-                      "建议：人工浏览器登录一次排查（验证码/密码/协议变化）",
-                      consecutive_failures, outcome.value,
-                      result.detail if result else "",
-                      cfg.retry.deep_backoff_sec)
-            else:
-                level("状态迁移：%s → %s（%s）",
-                      last_outcome.value if last_outcome else "<start>",
-                      outcome.value, result.detail if result else "内部异常")
-            last_outcome = outcome
-
-        # 空闲流量保活（可选，依抓包结论开启）
-        if (cfg.keepalive.traffic_keepalive and cfg.keepalive.keepalive_url
-                and online_since is not None
-                and now - last_keepalive >= cfg.keepalive.keepalive_interval_sec):
-            _traffic_keepalive(session, cfg)
-            last_keepalive = now
-
-        delay = policy.next_delay(outcome=outcome,
-                                  consecutive_failures=consecutive_failures,
-                                  online_since=online_since)
-        stop.wait(delay)
-
-    logger.info("daemon 退出")
-    lock.release()
     try:
-        paths.pid.unlink(missing_ok=True)
-    except OSError:
-        pass
+        session = requests.Session()
+        session.headers["User-Agent"] = cfg.advanced.user_agent
+        session.trust_env = False  # 探测/认证直连，不走系统代理
+        from .auth import session_store
+        session_store.load(session, paths.session)
+
+        flow = AuthFlow(session, cfg, session_path=paths.session)
+        policy = KeepalivePolicy(cfg)
+
+        # WiFi SSID watcher 触发 burst（Termux / Linux）
+        on_campus = threading.Event()
+        watcher: threading.Thread | None = None
+        if _ssid_probe_supported() and cfg.probe.wifi_ssid.strip():
+            watcher = threading.Thread(
+                target=_wifi_ssid_watcher,
+                args=(cfg, stop, on_campus),
+                name="wifi-ssid-watcher",
+                daemon=True,
+            )
+            watcher.start()
+
+        consecutive_failures = 0
+        online_since: float | None = None
+        last_password_login: float | None = None
+        last_keepalive = 0.0
+        last_outcome: FlowOutcome | None = None
+
+        while not stop.is_set():
+            # SSID 触发：连接上校园网时立即 mark_recovery 进入 burst
+            if on_campus.is_set():
+                on_campus.clear()
+                policy.mark_recovery()
+
+            _emit(on_update, DaemonEvent("checking", "正在检测网络状态…"))
+            allow_password = (cfg.password is not None
+                              and policy.allow_password(last_password_login))
+            try:
+                result = flow.ensure_online(allow_password=allow_password)
+            except Exception:  # noqa: BLE001 - 兜底，守护永不崩
+                logger.exception("ensure_online 未捕获异常")
+                result = None
+
+            now = time.time()
+            if result is None:
+                consecutive_failures += 1
+                outcome = FlowOutcome.FAILED
+            else:
+                outcome = result.outcome
+                if outcome in (FlowOutcome.LOGGED_IN, FlowOutcome.ALREADY_ONLINE):
+                    if outcome is FlowOutcome.LOGGED_IN and result.via == "password":
+                        last_password_login = now
+                    if online_since is None:
+                        online_since = now
+                    consecutive_failures = 0
+                else:
+                    consecutive_failures += 1
+                    if online_since is not None:
+                        logger.warning("网络中断（%s: %s），进入重登流程",
+                                       outcome.value, result.detail)
+                    online_since = None
+
+            _emit(on_update, DaemonEvent(
+                outcome.value,
+                result.detail if result else "登录流程发生内部异常",
+                outcome,
+            ))
+
+            # 状态迁移 + 网络恢复检测 → 触发 burst 窗口
+            if outcome != last_outcome:
+                if (last_outcome is FlowOutcome.NO_NETWORK
+                        and outcome is not FlowOutcome.NO_NETWORK):
+                    policy.mark_recovery()
+                    logger.info("网络恢复，开启 burst 探测窗口（%ds，每 %ds 探一次）",
+                                cfg.probe.recovery_burst_sec,
+                                cfg.probe.recovery_burst_interval_sec)
+                level = logger.info
+                if consecutive_failures >= cfg.retry.max_attempts:
+                    level = logger.error
+                    level("连续失败 %d 次（最新：%s %s）。深度退避 %ss。"
+                          "建议：人工浏览器登录一次排查（验证码/密码/协议变化）",
+                          consecutive_failures, outcome.value,
+                          result.detail if result else "",
+                          cfg.retry.deep_backoff_sec)
+                else:
+                    level("状态迁移：%s → %s（%s）",
+                          last_outcome.value if last_outcome else "<start>",
+                          outcome.value, result.detail if result else "内部异常")
+                last_outcome = outcome
+
+            # 空闲流量保活（可选，依抓包结论开启）
+            if (cfg.keepalive.traffic_keepalive and cfg.keepalive.keepalive_url
+                    and online_since is not None
+                    and now - last_keepalive >= cfg.keepalive.keepalive_interval_sec):
+                _traffic_keepalive(session, cfg)
+                last_keepalive = now
+
+            delay = policy.next_delay(outcome=outcome,
+                                      consecutive_failures=consecutive_failures,
+                                      online_since=online_since)
+            _wait_for_next_run(stop, wake_event, delay)
+    finally:
+        logger.info("daemon 退出")
+        lock.release()
+        try:
+            paths.pid.unlink(missing_ok=True)
+        except OSError:
+            pass
     return 0
 
 

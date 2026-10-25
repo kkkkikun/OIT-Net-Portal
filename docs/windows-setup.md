@@ -1,60 +1,103 @@
-# Windows 部署指南
+# Windows 托盘 App 使用与部署
 
-## 前置要求
+## 使用托盘 App（推荐）
 
-- Windows 10 1809+ / Windows 11
-- Python 3.9+（[python.org](https://www.python.org/downloads/) 安装时勾选 *Add python.exe to PATH*）
+支持 Windows 10 / Windows 11。托盘 App 在登录 Windows 后自动运行，在后台完成校园网认证和保活，不需要保留终端窗口，也不需要管理员权限。
 
-## 安装步骤（管理员 PowerShell）
+### 源码安装
+
+前置要求：Python 3.9+（[python.org](https://www.python.org/downloads/) 安装时勾选 *Add python.exe to PATH*）。
+
+在项目目录打开普通 PowerShell：
 
 ```powershell
-cd OIT-Net-Portal
+powershell -ExecutionPolicy Bypass -File scripts\install_windows_tray.ps1
+```
+
+脚本会安装 `.[tray]` 依赖、准备 `%APPDATA%\oit-portal\config.toml`、写入当前用户的开机自启项并启动 App。首次启动会弹出账号设置窗口；输入校园网账号和密码，点击“保存并连接”。
+
+如果旧版已注册 `OIT-Portal-Daemon` 计划任务，安装脚本会停止并移除它，避免两个守护同时运行。加 `-NoAutoStart` 可只安装、不注册开机自启。
+
+### 托盘操作
+
+右键屏幕右下角的 OIT 图标（可能在“隐藏的图标”中）：
+
+- **状态与详情**：绿色表示在线，蓝色表示检测中，灰色表示离线/暂停，橙色表示需要人工处理，红色表示失败。
+- **立即重新连接**：唤醒现有守护循环，立即重新探测，不会并发执行第二个登录。
+- **暂停/启动自动登录**：暂停会停止后台循环，下次启动 App 时仍默认恢复自动登录。
+- **账号设置**：修改账号密码；保存后自动用新配置重启连接。
+- **开机自动启动**：切换 HKCU `Run` 注册表项，只影响当前 Windows 用户。
+- **打开日志文件夹**：定位连接失败、验证码或协议变化问题。
+- **退出**：停止托盘和后台任务。
+
+### 独立 exe 构建
+
+在 Windows 原生环境执行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\build_windows.ps1
+```
+
+产物为 `dist\OIT-Portal.exe`，已包含 Python、托盘依赖和登录核心，可分发给未安装 Python 的机器。直接运行 exe 即可；首次使用仍需录入账号。构建脚本安装 PyInstaller 并生成应用图标。
+
+> PyInstaller、注册表自启和托盘交互必须在 Windows 原生环境验证，WSL/Linux 下的测试不能代替这些验收。
+
+## 配置与日志
+
+- 配置：`%APPDATA%\oit-portal\config.toml`
+- 密码：`%APPDATA%\oit-portal\credentials.toml`，与主配置分开，仅当前用户目录可访问
+- SSO 会话：`%APPDATA%\oit-portal\session.json`
+- 日志：`%APPDATA%\oit-portal\logs\oit-portal.log`（轮转 1MB×3）
+- 所有配置、凭据和日志默认在卸载时保留
+
+需要验证码时，连接校园 WiFi 后用浏览器访问任意 HTTP 网站完成一次人工登录；也可参考 `oit-portal login-info`。协议首次适配仍按 [抓包指南](capture-guide.md) 操作。
+
+## 卸载
+
+```powershell
+# 默认保留配置、凭据和日志
+powershell -ExecutionPolicy Bypass -File scripts\uninstall_windows.ps1
+
+# 连配置、凭据和日志一起删除
+powershell -ExecutionPolicy Bypass -File scripts\uninstall_windows.ps1 -Purge
+```
+
+卸载会移除托盘开机自启、停止托盘/旧 daemon 并移除旧计划任务。
+
+## 备用：CLI + 计划任务
+
+不想运行托盘界面时，可使用原有方式（管理员 PowerShell）：
+
+```powershell
 powershell -ExecutionPolicy Bypass -File scripts\install_windows.ps1
 ```
 
-脚本会：`pip install .` → 生成 `%APPDATA%\oit-portal\config.toml`（询问账号）→
-写 `credentials.toml`（询问密码）→ 注册计划任务 **OIT-Portal-Daemon**（登录自启 + 崩溃 3 次内自动重启 + 无执行时限）→ 立即启动。
+该脚本注册 **OIT-Portal-Daemon** 计划任务（登录自启 + 崩溃 3 次内自动重启 + 无执行时限）并立即启动。可选 `-EventTrigger` 会额外注册网络连接事件触发的 `oit-portal once`。
 
-### 可选：联网事件加速
-
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\install_windows.ps1 -EventTrigger
-```
-
-额外注册「网络已连接」（NetworkProfile 事件 10000）触发 `oit-portal once`，刚连上 WiFi 时秒级响应。
-与 daemon 之间靠单实例文件锁互斥，不会重复登录。
-
-## 验证
+常用命令：
 
 ```powershell
 oit-portal status      # online / captive / offline
 oit-portal once        # 手动登录一次
+oit-portal daemon      # 前台运行守护循环
 oit-portal stop        # 停止 daemon
 ```
 
-- **重启电脑**：登录 Windows 后 daemon 自启，浏览器直接可用
-- 日志：`%APPDATA%\oit-portal\logs\oit-portal.log`（轮转 1MB×3）
-
-## 管理与卸载
+计划任务管理：
 
 ```powershell
-# 查看/手动控制计划任务
 Get-ScheduledTask OIT-Portal-Daemon
 Start-ScheduledTask OIT-Portal-Daemon
-Stop-ScheduledTask  OIT-Portal-Daemon
-
-# 卸载（默认保留配置；-Purge 连配置凭据日志一起删）
-powershell -ExecutionPolicy Bypass -File scripts\uninstall_windows.ps1 -Purge
+Stop-ScheduledTask OIT-Portal-Daemon
 ```
 
-## 常见问题
+托盘和 CLI daemon 使用同一单实例锁，但不要同时部署两套自启方式。
 
-| 现象 | 处理 |
-|------|------|
-| 任务显示运行但没登录 | 看日志；多数是协议细节未填（先完成 docs/capture-guide.md 抓包） |
-| 需要验证码 | `oit-portal login-info`，浏览器人工登一次，daemon 自动收割 SSO 会话续跑 |
-| 换了密码 | 编辑 `%APPDATA%\oit-portal\credentials.toml`，然后 `oit-portal stop` + `Start-ScheduledTask OIT-Portal-Daemon` |
-| 不想用计划任务 | 回退方案：`shell:startup` 放一个 `oit-portal daemon` 的快捷方式（目标加 `pythonw` 隐藏窗口） |
+## Windows 验收清单
 
-> 注：`scripts/*.ps1` 与 pyinstaller 打包（一期可选）需在 **Windows 原生环境**执行验证，
-> WSL 内无法运行 PowerShell 计划任务注册。
+1. 首次启动弹出设置，保存后图标进入检测中并最终在线。
+2. 断开/重连校园 WiFi，托盘状态变化且自动恢复；手动重连只触发一个后台循环。
+3. 暂停后不再自动认证，恢复和修改账号后能重新连接。
+4. 重启 Windows 后仅当前用户自动启动；托盘自启开关与注册表状态一致。
+5. 打开日志、退出、卸载及 `-Purge` 行为符合上述说明。
+6. 独立 exe 在未安装 Python 的 Windows 机器上完成相同流程。

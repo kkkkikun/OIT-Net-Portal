@@ -16,9 +16,13 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=7"]
+tray = ["pystray>=0.19.5", "Pillow>=9.5"]
 
 [project.scripts]
 oit-portal = "oit_portal.cli:main"
+
+[project.gui-scripts]
+oit-portal-tray = "oit_portal.tray:main"
 
 [tool.setuptools.packages.find]
 include = ["oit_portal*"]

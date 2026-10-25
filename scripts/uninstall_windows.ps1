@@ -5,7 +5,10 @@ param([switch]$Purge)
 
 $ErrorActionPreference = "Continue"
 
-Write-Host "==> 停止 daemon 与计划任务" -ForegroundColor Cyan
+Write-Host "==> 停止托盘、daemon 与计划任务" -ForegroundColor Cyan
+Stop-Process -Name "OIT-Portal", "oit-portal-tray" -Force -ErrorAction SilentlyContinue
+Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" `
+    -Name "OIT-Portal" -ErrorAction SilentlyContinue
 oit-portal stop 2>$null
 Unregister-ScheduledTask -TaskName "OIT-Portal-Daemon" -Confirm:$false -ErrorAction SilentlyContinue
 Unregister-ScheduledTask -TaskName "OIT-Portal-OnConnect" -Confirm:$false -ErrorAction SilentlyContinue
