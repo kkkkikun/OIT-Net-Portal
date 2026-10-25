@@ -1,12 +1,13 @@
 # AGENTS.md — OIT-Net-Portal
 
-校园网（鄂尔多斯应用技术学院）静默自动登录 + 保活工具。Python 3.9+，单代码库多端共用（Windows 计划任务 / Android Termux / Linux systemd / Android 原生 App 路线B WIP）。
+校园网（鄂尔多斯应用技术学院）静默自动登录 + 保活工具。Python 3.9+，单代码库多端共用（Windows 托盘/计划任务 / Android Termux / Linux systemd / Android 原生 App 路线B WIP）。
 
 ## 仓库结构
 
 | 路径 | 作用 |
 |---|---|
 | `oit_portal/cli.py` | CLI 入口，子命令：`status / once / daemon / stop / login-info / capture` |
+| `oit_portal/tray.py` | Windows 托盘 App：Tkinter 账号设置、状态菜单、`TrayController` 后台线程；GUI 依赖延迟导入 |
 | `oit_portal/capture.py` | 一键抓包向导，自动发现协议并写入 `protocol.json` |
 | `oit_portal/discover.py` | 入口链路发现：统一处理 30x、`<meta refresh>`、JS `location.href=…` 三种跳转 |
 | `oit_portal/probe.py` | 三态探测（online / captive / offline），多探测点双确认 |
@@ -18,36 +19,40 @@
 | `oit_portal/protocol_overrides.py` | 把 `<配置目录>/protocol.json` 合并进 `CAPTURED` 命名空间（仅接受已有属性） |
 | `oit_portal/mobile_bridge.py` | 移动端桥接（路线B）：只暴露脱敏的探测/单次登录结果，不含 capture/daemon |
 | `oit_portal/mobile_sso.py` | 移动端首装 SSO 适配器：不读 protocol.json，仅当次页面可解析的 CryptoJS AES 表单才发加密密码，其余安全失败 |
-| `oit_portal/daemon.py` | 常驻守护循环（探活 + 保活 + 退避） |
+| `oit_portal/daemon.py` | 常驻守护循环（探活 + 保活 + 退避）；可选 `stop_event / wake_event / on_update` 供托盘驱动，CLI 默认行为不变 |
 | `oit_portal/keepalive.py` | 心跳 |
 | `oit_portal/htmlutil.py` | HTML/内联 JS 解析（找 AES key、表单字段、接口候选） |
-| `oit_portal/platform/{windows,termux}.py` | 平台启动/守护细节（notify/wake_lock 为预留死代码，未被调用；Linux 不需要 platform/linux.py） |
+| `oit_portal/platform/{windows,termux}.py` | Windows HKCU 自启/Toast、Termux 平台细节（notify/wake_lock 为预留死代码；Linux 不需要 platform/linux.py） |
 | `oit_portal/paths.py` | 跨平台路径解析（APPDATA / XDG / 便携模式 / `OIT_PORTAL_HOME`） |
 | `oit_portal/log.py` | 日志：旋转文件 + 控制台；**永不记录明文密码与完整 cookie**（只用 `fingerprint()` 记 4 位） |
-| `tests/` | 209 个用例（无网络）。`FakeSession` + 多种 fixture 状态机 |
-| `scripts/install_windows.ps1` | Windows 一键装（注册计划任务 + 启动） |
+| `tests/` | 275 个用例（无网络）。`FakeSession` + 多种 fixture 状态机 + Android UI/Windows 托盘契约测试 |
+| `scripts/install_windows_tray.ps1` | Windows 托盘普通用户安装（HKCU 自启 + 启动） |
+| `scripts/build_windows.ps1` | Windows 原生 PyInstaller 独立 exe 构建 |
+| `scripts/install_windows.ps1` | Windows CLI 备用安装（注册计划任务 + 启动） |
 | `scripts/install_termux.sh` | Termux 一键装 + 电池豁免 |
 | `scripts/install_linux.sh` | Linux 一键装（pip --user + systemd 系统服务，拒绝 root 直跑） |
 | `scripts/uninstall_linux.sh` | Linux 卸载（`--purge` 删配置） |
 | `scripts/oit-portal.service.template` | systemd unit 模板（@USER@/@EXEC_START@/@HOME@ 占位符，禁加 PrivateTmp/ProtectHome） |
 | `docs/protocol-notes.md` | 协议确认记录（待确认 / 已确认），协议变更先查这里 |
 | `docs/capture-guide.md` | 抓包向导使用说明（用户文档） |
+| `docs/windows-setup.md` | Windows 托盘使用、exe 构建、CLI 备用部署和验收清单 |
 | `docs/linux-setup.md` | Linux 部署文档（systemd 服务、WiFi SSID 触发、故障排查） |
-| `android/` | 路线B Android 原生 App（Kotlin + Compose + Chaquopy，**WIP 未编译未真机验证**），现状清单见 `android/README.md` |
+| `android/` | 路线B Android 原生 App（Kotlin + Compose + Chaquopy）；Debug APK 已构建、第二轮真机功能验收通过，最新 UI/UX 改版待新一轮真机视觉验收，现状清单见 `android/README.md` |
 
 ## 常用命令
 
 ```bash
 pip install -e .                       # 开发安装（含 console_scripts: oit-portal）
+pip install -e '.[tray]'               # Windows 托盘依赖 + oit-portal-tray GUI 入口
 oit-portal capture                     # 首次：协议自配置（校内未登录状态跑）
 oit-portal status                      # 探测三态
 oit-portal once                        # 完整跑一次登录流程（退出码 0/1/2/3 见 cli.py）
 oit-portal daemon                      # 守护循环
 oit-portal stop                         # 停 daemon
-python -m pytest                       # 跑全部 209 个用例（无网络）
+python -m pytest                       # 跑全部 275 个用例（无网络）
 ```
 
-依赖：`requests`、`pycryptodome`（AES-128-CBC 复现，缺失时 `sso.py` 优雅降级）、`tomli`（仅 <3.11）。
+依赖：`requests`、`pycryptodome`（AES-128-CBC 复现，缺失时 `sso.py` 优雅降级）、`tomli`（仅 <3.11）。托盘可选依赖：`pystray`、`Pillow`；Tkinter 使用 Python 标准库。
 
 ## 协议自配置机制（核心约束）
 

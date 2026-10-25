@@ -1,10 +1,10 @@
 # SNAPSHOT.md — 项目状态快照
 
-> 最后更新: 2026-10-22 | 基线测试: 252 passed (无网络) + Android testDebugUnitTest 31 例
+> 最后更新: 2026-10-24 | 验证: pytest 264 passed (无网络) + Android testDebugUnitTest 48 例 + assembleDebug + lintDebug
 
 ## 项目概览
 
-**oit-portal** — 鄂尔多斯应用技术学院校园网静默自动登录 + 保活工具。Python 3.9+，单代码库多端共用（Windows 计划任务 / Android Termux / Linux systemd），另有**路线B Android 原生 App**（`android/`，Kotlin + Compose + Chaquopy 复用 Python 核心，WIP 未编译未真机验证）。
+**oit-portal** — 鄂尔多斯应用技术学院校园网静默自动登录 + 保活工具。Python 3.9+，单代码库多端共用（Windows 计划任务 / Android Termux / Linux systemd），另有**路线B Android 原生 App**（`android/`，Kotlin + Compose + Chaquopy 复用 Python 核心；Debug APK 已构建，手动登录与新版 UI 已做真机验证，后台自动重连代码已接通、待真机后台生命周期验收）。
 
 核心机制：登录协议不写死，由 `oit-portal capture` 抓包向导自动发现，写入用户配置目录 `protocol.json`，运行时合并进 `sso.py` / `eportal.py` 顶部的 `CAPTURED` 常量块（占位标签 `<CAPTURE:Cx.y>` 对应 `docs/protocol-notes.md` 编号）。
 
@@ -14,14 +14,15 @@
 |---|---|
 | 语言 | Python 3.9+ |
 | 依赖 | requests, pycryptodome (可选 AES), tomli (<3.11) |
-| 测试 | pytest，252 用例全部无网络（FakeSession + fixture 状态机 + Android 静态契约测试）；Android 另有 31 例 ViewModel JUnit 单测 |
+| 测试 | pytest，264 用例全部无网络（FakeSession + fixture 状态机 + Android 静态契约测试）；Android 另有 48 例 JUnit 单测 |
 | 打包 | pyproject.toml + setuptools，console_scripts: oit-portal |
 | 格式化 | 无强制工具，遵循现有代码风格 |
 
 ## Git 状态
 
-- 分支: main（干净）
+- 分支: android-app（UI/UX 重设计与后台自动重连改动尚未提交）
 - 最近提交:
+  - `e22ed73` fix(portal): 兼容学生网 AC 漏标 Content-Encoding 的 gzip 响应
   - `2d80439` fix(android): stage Python sources for debug build
   - `f821231` wip(android): normalize mobile SSO redirects and preserve auth code
   - `8cfe943` wip(android): fail closed on uncertain mobile password encryption
@@ -73,9 +74,9 @@ openspec/                   # OpenSpec 规范体系（specs/ + changes/）
 ## 当前工作
 
 - **阶段**: 协议自配置机制已完整落地并通过该校实测；Linux（systemd）支持已落地
-- **进行中**: 路线B Android 原生 App（2026-10-18 起，12 个提交）——Compose 骨架 + Chaquopy 桥接 + 手动登录已接线；capture/自动重连/凭据存储未实现，Gradle Wrapper 未生成，未编译未真机验证（现状清单见 android/README.md）
-- **待实机验证**: Jetson Nano 端到端部署（install_linux.sh）
-- **阻塞**: 无
+- **进行中**: 路线B Android 原生 App——手动登录、多账号、Keystore 凭据、自动刷新、诊断、三入口 UI 均已完成并真机验证（2026-10-24 第三轮 ADB 验收通过，视觉暂接受待后续优化）。2026-10-24 完成后台自动重连：前台 Service + 有界调度器（60s 在线巡检 / 30s 离线兜底 / CAPTIVE 才登录 / 300s 最小重登 / 三次失败人工介入），默认关闭 + 通知授权 + 通知停止，不改移动桥接边界。pytest 264 passed、Android 单测 48 passed、assembleDebug 与 lintDebug 通过；经两轮代码审查修复启停竞态与节流重置。Capture 仍延后。
+- **待实机验证**: Android 后台自动重连真机验收（开启/通知停止/后台断网自动认证/人工介入/结束会话/进程回收；Android 13+ 通知权限路径）——当前 ADB 无设备连接，待手机重新接入后用 `android/app/build/outputs/apk/debug/app-debug.apk` 验证；Jetson Nano 端到端部署（install_linux.sh）
+- **阻塞**: 后台自动重连真机验收依赖手机重新连接 ADB
 
 ## 安全红线（改代码前自查）
 

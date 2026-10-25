@@ -1,6 +1,6 @@
 # tasks.md — 全局任务追踪
 
-> 最后更新: 2026-10-21
+> 最后更新: 2026-10-24
 > 与 openspec/changes/ 的关系: 大改动走 `/opsx:propose` 生成 change 提案（openspec/changes/<name>/）；这里只记跨 change 的长期事项与日常待办。
 
 ## 进行中
@@ -19,7 +19,7 @@
 - [x] 设置页（2026-10-21：网络恢复/前台自动刷新两个开关，AppSettingsStore 持久化，默认开启）
 - [x] 日志查看（2026-10-21：会话内诊断事件卡，最近 50 条脱敏事件，界面展示最新 10 条）
 - [ ] Capture（延后：本校协议已实测确认，移动端首装可无 protocol.json fail-closed 登录，非必需）
-- [ ] 后台自动重连（前台 Service 接管认证流程 + 运行时通知权限，按用户要求仅在确需后台常驻时接入，开关保持禁用）
+- [x] 后台自动重连（2026-10-24：前台 Service + 有界调度器接通，默认关闭、通知授权、通知停止、60s 巡检/30s 离线兜底/CAPTIVE 才登录/300s 最小重登/三次失败人工介入；264 pytest + 48 Android 单测 + assembleDebug + lintDebug 通过；两轮审查修复启停竞态与节流重置；**真机后台验收待 ADB 设备重连**）
 - [x] 凭据安全存储（2026-10-21：Android Keystore AES-256/GCM；记住密码用户明示、默认不勾选、不自动登录；登录成功才保存）
 - [x] 学生网 ePortal gzip 乱码修复（2026-10-22：_response_text 魔数兜底，真机 logcat 定位）
 - [x] 多账号管理（2026-10-21：多账号加密存储+别名备注+SSID 绑定自动预选+账号管理对话框；旧单凭据自动迁移；API 33+ 用 NEARBY_WIFI_DEVICES 免定位权限，≤32 退回精确定位+粗略定位成对声明）
@@ -29,14 +29,18 @@
 
 ## 待办
 
+- [ ] Android 后台自动重连真机验收（开启/通知停止/后台断网自动认证/人工介入/结束会话/进程回收；Android 13+ 通知权限路径）——手机重新连接 ADB 后安装 `android/app/build/outputs/apk/debug/app-debug.apk` 执行
+- [ ] Android UI 细节优化（用户反馈部分界面不够和谐，已确认暂缓）
 - [ ] Jetson Nano 实机端到端验证（install_linux.sh 全流程，清单见 docs/linux-setup.md）
 
 ## 阻塞项
 
-（暂无）
+- 后台自动重连真机验收：当前 ADB 无设备连接，待手机重新接入
 
 ## 已完成（近期）
 
+- [x] Android UI/UX 第三轮真机验收（覆盖安装、三页导航、设置持久化、实际登录、Wi-Fi 断开/恢复、前台刷新、本地会话；视觉暂接受）— 2026-10-24（ADB 自动验证 + 截图）
+- [x] Android UI/UX 重设计（连接 / 设置 / 诊断三入口、Material 3 主题）— 2026-10-23；258 pytest + 31 Android 单测 + Debug 构建 + Lint 全通过
 - [x] 移动端桥接 + 首装 SSO 适配器（`mobile_bridge.py` / `mobile_sso.py`）— 2026-10-20
 - [x] Linux（systemd）支持（daemon SSID 扩展 + install/uninstall + service 模板 + docs）— 2026-10-16（`4ce38a1`）
 - [x] OpenSpec 项目初始化（specs 五域 + CLAUDE.md 索引）— 2026-10-16（`dbb878d`）

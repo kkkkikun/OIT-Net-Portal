@@ -10,12 +10,12 @@
 
 <p align="center">
   <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.9%2B-3776AB?logo=python&logoColor=white" alt="Python 3.9+"></a>
-  <img src="https://img.shields.io/badge/tests-209%20passed-brightgreen" alt="209 tests passed">
+  <img src="https://img.shields.io/badge/tests-275%20passed-brightgreen" alt="275 tests passed">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License"></a>
 </p>
 
 <p align="center">
-  <strong>Windows 计划任务</strong> · <strong>Android Termux</strong> · <strong>Linux systemd</strong> — 单 Python 代码库三端共用
+  <strong>Windows 托盘 App / 计划任务</strong> · <strong>Android Termux</strong> · <strong>Linux systemd</strong> — 单 Python 代码库多端共用
 </p>
 
 ```
@@ -26,9 +26,10 @@
 
 ## ✨ 特性
 
+- **Windows 托盘 App**：实时状态图标、首次账号设置、手动重连、暂停/恢复、开机自启和日志入口，无需终端或管理员权限
 - **协议抓包自配置**：登录协议不写死，`oit-portal capture` 向导一键自动发现（SSO 端点 / AES 加密 / ePortal 上线方式），写入用户目录 `protocol.json`
 - **全链路自动化**：探测 → SSO OAuth 免密复用 / 账密登录 → 锐捷 ePortal 上线 → 复测确认 → 轮询保活
-- **三端后台守护**：断网自动重连、指数退避、网络恢复 burst 探测、WiFi SSID 触发加速
+- **多端后台守护**：断网自动重连、指数退避、网络恢复 burst 探测、WiFi SSID 触发加速
 - **安全设计**：密码独立存放（0600）、日志脱敏（4 位指纹）、直连不代理、敏感文件不入库
 
 ## 🚀 快速开始
@@ -37,23 +38,25 @@
 pip install -e .
 oit-portal capture     # 首次：协议自配置（校内未登录状态运行，约 2 分钟）
 oit-portal status      # online / captive / offline 三态探测
-python -m pytest       # 209 个用例（无网络）
+python -m pytest       # 全部用例（无网络）
 ```
 
 ### 各平台一键部署
 
 | 平台 | 命令 | 自启方式 | 文档 |
 |------|------|----------|------|
-| **Windows** | `scripts\install_windows.ps1` | 计划任务（登录自启 + 崩溃重启） | [windows-setup](docs/windows-setup.md) |
+| **Windows 托盘** | `scripts\install_windows_tray.ps1` | 当前用户登录自启；也可用 PyInstaller 构建独立 exe | [windows-setup](docs/windows-setup.md) |
+| **Windows CLI** | `scripts\install_windows.ps1` | 计划任务（登录自启 + 崩溃重启） | [windows-setup](docs/windows-setup.md) |
 | **Android Termux** | `bash scripts/install_termux.sh` | Termux:Boot + 电池豁免 | [termux-setup](docs/termux-setup.md) |
 | **Linux (systemd)** | `bash scripts/install_linux.sh` | 系统服务（开机自启 + 崩溃自愈） | [linux-setup](docs/linux-setup.md) |
 
-> 🚧 **Android 原生 App（路线B，开发中）**：`android/` 目录是基于 Kotlin + Jetpack Compose + Chaquopy 的原生客户端，按需复用本仓库 Python 核心，当前为未编译的 WIP 骨架（手动登录已接线，自动重连/凭据存储未实现）。现状与路线图见 [android/README.md](android/README.md)。
+> 🚧 **Android 原生 App（路线B，持续完善）**：`android/` 是基于 Kotlin + Jetpack Compose + Chaquopy 的原生客户端。Debug APK 已构建，手动登录、多账号、Keystore 凭据存储、自动刷新设置与脱敏诊断已接通；连接/设置/诊断三入口 UI/UX 已重设计并通过构建。后台自动重连与 Capture 仍按计划延后，最新界面待新一轮真机视觉验收。现状与路线图见 [android/README.md](android/README.md)。
 
 ## 📖 命令一览
 
 | 命令 | 作用 |
 |------|------|
+| `oit-portal-tray` | **Windows 托盘 App**（源码安装 `pip install .[tray]`） |
 | `oit-portal capture` | **一键抓包向导**：自动发现登录协议并自配置（首次使用先跑这个，[指南](docs/capture-guide.md)） |
 | `oit-portal status` | 探测当前状态（online / captive / offline） |
 | `oit-portal once` | 完整登录一次（退出码 0 成功 / 1 失败 / 2 无网络） |

@@ -8,7 +8,7 @@
 
 ## 项目概览
 
-Python 3.9+ 校园网静默自动登录 + 保活工具。登录协议不写死：由 `oit-portal capture` 抓包向导自动发现，写入用户配置目录 `protocol.json`，运行时合并进 `CAPTURED` 常量块。pytest 209 用例全部无网络。另有路线B Android 原生 App（`android/`，Chaquopy 复用 Python 核心，WIP 未编译）。
+Python 3.9+ 校园网静默自动登录 + 保活工具。登录协议不写死：由 `oit-portal capture` 抓包向导自动发现，写入用户配置目录 `protocol.json`，运行时合并进 `CAPTURED` 常量块。pytest 258 用例全部无网络。另有路线B Android 原生 App（`android/`，Kotlin + Compose + Chaquopy 复用 Python 核心；Debug APK 已构建，最新 UI/UX 改版已构建通过，尚待新一轮真机视觉验收）。
 
 ## 文档体系
 
@@ -33,7 +33,7 @@ Python 3.9+ 校园网静默自动登录 + 保活工具。登录协议不写死�
 
 | 文档 | 用途 | 查询方式 |
 |------|------|----------|
-| `.claude/docs/SNAPSHOT.md` | 项目状态快照（基线 209 tests passed） | 会话开始先读 |
+| `.claude/docs/SNAPSHOT.md` | 项目状态快照（最新 258 tests passed） | 会话开始先读 |
 | `.claude/docs/tasks.md` | 任务追踪（进行中 / 待办 / 阻塞 / 已完成） | 会话开始先读 |
 | `.claude/analysis/` | 深度分析文档（openspec-explorer 生成） | `ls .claude/analysis/` |
 | `docs/protocol-notes.md` | 协议确认记录 C1-C4（改协议前必读） | `grep "关键词" docs/protocol-notes.md` |
@@ -81,7 +81,7 @@ python3 -m pytest       # 全部用例（无网络）
 
 ## 检查清单（每次提交前）
 
-- [ ] `python3 -m pytest` 全绿（基线 209 passed）
+- [ ] `python3 -m pytest` 全绿（当前基线 258 passed）
 - [ ] 协议变更同步更新 `docs/protocol-notes.md`（状态 + 日期）和对应测试夹具
 - [ ] 日志无明文 secret（只走 `log.fingerprint()`）
 - [ ] 新 Session 有 `trust_env = False`
