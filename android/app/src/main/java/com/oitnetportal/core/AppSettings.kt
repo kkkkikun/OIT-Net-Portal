@@ -12,11 +12,15 @@ interface SettingsStore {
 
     /** 应用回到前台时自动刷新一次连接状态。 */
     var autoRefreshOnForeground: Boolean
+
+    /** 后台自动重连；状态由同一进程的状态仓库发布。 */
+    var backgroundAutoReconnectEnabled: Boolean
 }
 
 class AppSettingsStore(context: Context) : SettingsStore {
     private val prefs = context.applicationContext
         .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    private val backgroundState = PersistentBackgroundReconnectStateStore.get(context)
 
     override var autoRefreshOnNetworkRecovery: Boolean
         get() = prefs.getBoolean(KEY_NETWORK_RECOVERY, true)
@@ -28,6 +32,12 @@ class AppSettingsStore(context: Context) : SettingsStore {
         get() = prefs.getBoolean(KEY_FOREGROUND, true)
         set(value) {
             prefs.edit().putBoolean(KEY_FOREGROUND, value).apply()
+        }
+
+    override var backgroundAutoReconnectEnabled: Boolean
+        get() = backgroundState.enabled
+        set(value) {
+            backgroundState.enabled = value
         }
 
     private companion object {

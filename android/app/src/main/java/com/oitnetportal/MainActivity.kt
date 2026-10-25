@@ -12,13 +12,16 @@ import com.oitnetportal.core.AndroidKeystoreAccountStore
 import com.oitnetportal.core.AndroidWifiIdentityProvider
 import com.oitnetportal.core.AppSettingsStore
 import com.oitnetportal.core.ChaquopyPortalCoreBridge
+import com.oitnetportal.core.PersistentBackgroundReconnectStateStore
 import com.oitnetportal.core.UnavailablePortalCoreBridge
+import com.oitnetportal.service.BackgroundReconnectServiceController
 import com.oitnetportal.ui.PortalApp
 import com.oitnetportal.ui.PortalViewModel
 
 class MainActivity : ComponentActivity() {
     private val portalViewModel: PortalViewModel by viewModels {
         val appContext = applicationContext
+        val backgroundState = PersistentBackgroundReconnectStateStore.get(appContext)
         PortalViewModel.factory(
             UnavailablePortalCoreBridge(),
             bridgeFactory = { username, password ->
@@ -27,6 +30,8 @@ class MainActivity : ComponentActivity() {
             accountStore = AndroidKeystoreAccountStore(appContext),
             settingsStore = AppSettingsStore(appContext),
             wifiIdentity = AndroidWifiIdentityProvider(appContext),
+            backgroundStateStore = backgroundState,
+            backgroundLauncher = BackgroundReconnectServiceController(appContext, backgroundState),
         )
     }
 

@@ -1,6 +1,10 @@
 package com.oitnetportal.ui
 
 import com.oitnetportal.core.AccountStore
+import com.oitnetportal.core.BackgroundReconnectLauncher
+import com.oitnetportal.core.BackgroundReconnectSnapshot
+import com.oitnetportal.core.BackgroundReconnectStateStore
+import com.oitnetportal.core.BackgroundReconnectStatus
 import com.oitnetportal.core.CaptureEngine
 import com.oitnetportal.core.DaemonEngine
 import com.oitnetportal.core.LoginOutcome
@@ -14,6 +18,8 @@ import com.oitnetportal.core.UnavailablePortalCoreBridge
 import com.oitnetportal.core.WifiIdentityProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -103,7 +109,46 @@ private class FakeWifiIdentityProvider(
 private class FakeSettingsStore(
     override var autoRefreshOnNetworkRecovery: Boolean = true,
     override var autoRefreshOnForeground: Boolean = true,
+    override var backgroundAutoReconnectEnabled: Boolean = false,
 ) : SettingsStore
+
+private class FakeBackgroundStateStore : BackgroundReconnectStateStore {
+    private val mutableSnapshots = MutableStateFlow(BackgroundReconnectSnapshot())
+    override val snapshots: StateFlow<BackgroundReconnectSnapshot> = mutableSnapshots
+
+    override var enabled: Boolean
+        get() = mutableSnapshots.value.enabled
+        set(value) {
+            mutableSnapshots.value = mutableSnapshots.value.copy(enabled = value)
+        }
+
+    override fun update(status: BackgroundReconnectStatus, detail: String) {
+        mutableSnapshots.value = mutableSnapshots.value.copy(status = status, detail = detail)
+    }
+}
+
+private class FakeBackgroundLauncher : BackgroundReconnectLauncher {
+    var startCount = 0
+    var stopCount = 0
+    var accountsChangedCount = 0
+    var attentionCount = 0
+
+    override fun start() {
+        startCount++
+    }
+
+    override fun stop() {
+        stopCount++
+    }
+
+    override fun accountsChanged() {
+        accountsChangedCount++
+    }
+
+    override fun attention(detail: String) {
+        attentionCount++
+    }
+}
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class PortalViewModelTest {
@@ -122,12 +167,16 @@ class PortalViewModelTest {
         accountStore: AccountStore? = null,
         settingsStore: SettingsStore? = null,
         wifiIdentity: WifiIdentityProvider? = null,
+        backgroundStateStore: BackgroundReconnectStateStore? = null,
+        backgroundLauncher: BackgroundReconnectLauncher? = null,
     ) = PortalViewModel(
         core,
         bridgeFactory = null,
         accountStore = accountStore,
         settingsStore = settingsStore,
         wifiIdentity = wifiIdentity,
+        backgroundStateStore = backgroundStateStore,
+        backgroundLauncher = backgroundLauncher,
     )
 
     /** 等待 Dispatchers.IO 上的真实线程工作落地（runTest 虚拟时钟不会等真实线程）。 */
@@ -411,6 +460,70 @@ class PortalViewModelTest {
     }
 
     @Test
+    fun `background reconnect defaults off and valid account enables service`() = runTest {
+        installMain()
+        val store = FakeAccountStore(listOf(studentAccount()), lastUsedId = "2024001")
+        val stateStore = FakeBackgroundStateStore()
+        val launcher = FakeBackgroundLauncher()
+        val vm = viewModel(
+            FakeCoreBridge(), accountStore = store,
+            backgroundStateStore = stateStore, backgroundLauncher = launcher,
+        )
+        assertEquals(false, vm.uiState.value.backgroundAutoReconnectEnabled)
+
+        vm.setBackgroundAutoReconnect(true)
+        advanceUntilIdle()
+
+        assertEquals(true, stateStore.enabled)
+        assertEquals(1, launcher.startCount)
+        assertTrue(vm.uiState.value.events.any { it.contains("后台自动重连") })
+    }
+
+    @Test
+    fun `background reconnect rejects empty account and denied notification`() = runTest {
+        installMain()
+        val stateStore = FakeBackgroundStateStore()
+        val launcher = FakeBackgroundLauncher()
+        val vm = viewModel(
+            FakeCoreBridge(), accountStore = FakeAccountStore(),
+            backgroundStateStore = stateStore, backgroundLauncher = launcher,
+        )
+
+        vm.setBackgroundAutoReconnect(true)
+        vm.onBackgroundNotificationPermissionResult(false)
+
+        assertEquals(false, stateStore.enabled)
+        assertEquals(0, launcher.startCount)
+        assertEquals(1, launcher.stopCount)
+        assertTrue(vm.uiState.value.notice != null)
+    }
+
+    @Test
+    fun `background state flow exposes only fixed status detail`() = runTest {
+        installMain()
+        val stateStore = FakeBackgroundStateStore()
+        val vm = viewModel(FakeCoreBridge(), backgroundStateStore = stateStore)
+
+        stateStore.update(BackgroundReconnectStatus.BACKOFF, "等待安全重试")
+        advanceUntilIdle()
+
+        assertEquals(BackgroundReconnectStatus.BACKOFF, vm.uiState.value.backgroundReconnectStatus)
+        assertEquals("等待安全重试", vm.uiState.value.backgroundReconnectDetail)
+    }
+
+    @Test
+    fun `ending local session also stops background launcher`() = runTest {
+        installMain()
+        val launcher = FakeBackgroundLauncher()
+        val vm = viewModel(FakeCoreBridge(), backgroundLauncher = launcher)
+
+        vm.endLocalSession()
+        advanceUntilIdle()
+
+        assertEquals(1, launcher.stopCount)
+    }
+
+    @Test
     fun `diagnostic events are recorded for login refresh and network changes`() = runTest {
         installMain()
         val core = FakeCoreBridge()
@@ -520,16 +633,18 @@ class PortalViewModelTest {
         val core = FakeCoreBridge()
         core.loginResult = LoginResult(LoginOutcome.LOGGED_IN, "登录成功")
         val store = FakeAccountStore()
+        val launcher = FakeBackgroundLauncher()
         val wifi = FakeWifiIdentityProvider(ssid = "OIT-XUESHENG", canRead = true)
         val vm = PortalViewModel(
             UnavailablePortalCoreBridge(),
             bridgeFactory = { _, _ -> core },
             accountStore = store,
             wifiIdentity = wifi,
+            backgroundLauncher = launcher,
         )
 
         vm.loginWithCredentials("2024001", "stu-secret", remember = true)
-        awaitReal { core.loginCallCount > 0 }
+        awaitReal { launcher.accountsChangedCount > 0 }
 
         val saved = store.saved("2024001")
         assertEquals("stu-secret", saved?.password)
@@ -537,6 +652,7 @@ class PortalViewModelTest {
         assertEquals("2024001", store.loadLastUsedId())
         assertEquals(1, vm.uiState.value.savedAccounts.size)
         assertEquals(0, store.removeCount)
+        assertEquals(1, launcher.accountsChangedCount)
     }
 
     @Test
@@ -621,7 +737,12 @@ class PortalViewModelTest {
     fun `deleteAccount removes account and clears prefill when selected`() = runTest {
         installMain()
         val store = FakeAccountStore(listOf(studentAccount(), teacherAccount()))
-        val vm = viewModel(FakeCoreBridge(), accountStore = store)
+        val stateStore = FakeBackgroundStateStore().apply { enabled = true }
+        val launcher = FakeBackgroundLauncher()
+        val vm = viewModel(
+            FakeCoreBridge(), accountStore = store,
+            backgroundStateStore = stateStore, backgroundLauncher = launcher,
+        )
         vm.selectAccount("2024001")
         assertEquals("2024001", vm.uiState.value.prefill?.accountId)
 
@@ -630,13 +751,15 @@ class PortalViewModelTest {
         assertEquals(1, vm.uiState.value.savedAccounts.size)
         assertNull(vm.uiState.value.prefill)
         assertNull(store.saved("2024001"))
+        assertEquals(1, launcher.attentionCount)
     }
 
     @Test
     fun `updateAccountMeta edits alias and ssid binding without touching password`() = runTest {
         installMain()
         val store = FakeAccountStore(listOf(studentAccount()))
-        val vm = viewModel(FakeCoreBridge(), accountStore = store)
+        val launcher = FakeBackgroundLauncher()
+        val vm = viewModel(FakeCoreBridge(), accountStore = store, backgroundLauncher = launcher)
 
         vm.updateAccountMeta("2024001", "主账号", "OIT-GONGQIN")
 
@@ -645,6 +768,7 @@ class PortalViewModelTest {
         assertEquals("OIT-GONGQIN", updated?.boundSsid)
         assertEquals("stu-secret", updated?.password)
         assertEquals("主账号", vm.uiState.value.savedAccounts.first().alias)
+        assertEquals(1, launcher.accountsChangedCount)
     }
 
     @Test

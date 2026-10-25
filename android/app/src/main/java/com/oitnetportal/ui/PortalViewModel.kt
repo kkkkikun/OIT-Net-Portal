@@ -6,6 +6,10 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.oitnetportal.core.AccountInfo
 import com.oitnetportal.core.AccountStore
+import com.oitnetportal.core.BackgroundAccountSelector
+import com.oitnetportal.core.BackgroundReconnectLauncher
+import com.oitnetportal.core.BackgroundReconnectStateStore
+import com.oitnetportal.core.BackgroundReconnectStatus
 import com.oitnetportal.core.ChaquopyPortalCoreBridge
 import com.oitnetportal.core.CoreUnavailableException
 import com.oitnetportal.core.LoginOutcome
@@ -52,6 +56,9 @@ data class PortalUiState(
     val notice: String? = null,
     val autoRefreshOnNetworkRecovery: Boolean = true,
     val autoRefreshOnForeground: Boolean = true,
+    val backgroundAutoReconnectEnabled: Boolean = false,
+    val backgroundReconnectStatus: BackgroundReconnectStatus = BackgroundReconnectStatus.STOPPED,
+    val backgroundReconnectDetail: String = "后台自动重连已关闭",
     /** 会话内诊断事件（新事件在前，有上限），只含脱敏文本。 */
     val events: List<String> = emptyList(),
     /** 已保存账号的脱敏元数据（不含密码）。 */
@@ -68,6 +75,8 @@ class PortalViewModel(
     private val accountStore: AccountStore? = null,
     private val settingsStore: SettingsStore? = null,
     private val wifiIdentity: WifiIdentityProvider? = null,
+    private val backgroundStateStore: BackgroundReconnectStateStore? = null,
+    private val backgroundLauncher: BackgroundReconnectLauncher? = null,
 ) : ViewModel() {
     private var core: PortalCoreBridge = initialCore
     private val operationMutex = Mutex()
@@ -85,10 +94,24 @@ class PortalViewModel(
             if (initialCore.isAvailable) "Python 核心桥接已就绪"
             else "应用已启动，等待输入校园网凭据"
         )
+        backgroundStateStore?.let { store ->
+            viewModelScope.launch {
+                store.snapshots.collect { snapshot ->
+                    _uiState.update {
+                        it.copy(
+                            backgroundAutoReconnectEnabled = snapshot.enabled,
+                            backgroundReconnectStatus = snapshot.status,
+                            backgroundReconnectDetail = snapshot.detail,
+                        )
+                    }
+                }
+            }
+        }
     }
 
     private fun initialUiState(initialCore: PortalCoreBridge): PortalUiState {
         val accounts = accountStore?.loadAccounts().orEmpty()
+        val background = backgroundStateStore?.snapshots?.value
         return PortalUiState(
             coreAvailable = initialCore.isAvailable,
             statusDetail = when {
@@ -98,6 +121,9 @@ class PortalViewModel(
             },
             autoRefreshOnNetworkRecovery = settingsStore?.autoRefreshOnNetworkRecovery ?: true,
             autoRefreshOnForeground = settingsStore?.autoRefreshOnForeground ?: true,
+            backgroundAutoReconnectEnabled = background?.enabled ?: false,
+            backgroundReconnectStatus = background?.status ?: BackgroundReconnectStatus.STOPPED,
+            backgroundReconnectDetail = background?.detail ?: "后台自动重连已关闭",
             savedAccounts = accounts.map { it.toInfo() },
             prefill = choosePrefill(accounts),
             wifiAutoMatchAvailable = wifiIdentity?.canReadSsid() ?: false,
@@ -190,6 +216,7 @@ class PortalViewModel(
     }
 
     fun endLocalSession() = runOperation {
+        backgroundLauncher?.stop()
         recordEvent("用户结束本地会话")
         val endingCore = core
         core = UnavailablePortalCoreBridge()
@@ -212,6 +239,7 @@ class PortalViewModel(
         val store = accountStore ?: return
         val account = store.loadAccounts().firstOrNull { it.id == accountId } ?: return
         store.saveLastUsedId(account.id)
+        backgroundLauncher?.accountsChanged()
         _uiState.update {
             it.copy(
                 prefill = PrefillCredentials(
@@ -230,6 +258,9 @@ class PortalViewModel(
         if (disposed) return
         val store = accountStore ?: return
         store.remove(accountId)
+        if (_uiState.value.backgroundAutoReconnectEnabled) {
+            backgroundLauncher?.attention("账号已删除，请检查后台自动重连")
+        }
         _uiState.update {
             it.copy(
                 savedAccounts = store.loadAccounts().map(StoredAccount::toInfo),
@@ -245,6 +276,7 @@ class PortalViewModel(
         val store = accountStore ?: return
         val account = store.loadAccounts().firstOrNull { it.id == accountId } ?: return
         store.upsert(account.copy(alias = alias.trim(), boundSsid = boundSsid.trim()))
+        backgroundLauncher?.accountsChanged()
         _uiState.update {
             it.copy(savedAccounts = store.loadAccounts().map(StoredAccount::toInfo))
         }
@@ -326,6 +358,7 @@ class PortalViewModel(
                         it.copy(savedAccounts = store.loadAccounts().map(StoredAccount::toInfo))
                     }
                 }
+                backgroundLauncher?.accountsChanged()
             }
             else -> Unit
         }
@@ -432,6 +465,49 @@ class PortalViewModel(
         recordEvent(if (enabled) "已开启前台自动刷新" else "已关闭前台自动刷新")
     }
 
+    fun canEnableBackgroundReconnect(): Boolean {
+        val store = accountStore ?: return false
+        return BackgroundAccountSelector.select(
+            accounts = store.loadAccounts(),
+            lastUsedId = store.loadLastUsedId(),
+            currentSsid = wifiIdentity?.currentSsid(),
+        ) != null
+    }
+
+    fun setBackgroundAutoReconnect(enabled: Boolean) {
+        if (disposed) return
+        if (!enabled) {
+            backgroundLauncher?.stop()
+            backgroundStateStore?.enabled = false
+            recordEvent("已关闭后台自动重连")
+            return
+        }
+        if (!canEnableBackgroundReconnect()) {
+            _uiState.update { it.copy(notice = "请先选择并保存一个校园网账号") }
+            recordEvent("后台自动重连未开启：没有可用账号")
+            return
+        }
+        val launcher = backgroundLauncher
+        val stateStore = backgroundStateStore
+        if (launcher == null || stateStore == null) {
+            _uiState.update { it.copy(notice = "后台自动重连尚未接入") }
+            return
+        }
+        stateStore.enabled = true
+        launcher.start()
+        recordEvent("已开启后台自动重连")
+    }
+
+    fun onBackgroundNotificationPermissionResult(granted: Boolean) {
+        if (granted) {
+            setBackgroundAutoReconnect(true)
+        } else {
+            setBackgroundAutoReconnect(false)
+            _uiState.update { it.copy(notice = "未授予通知权限，后台自动重连保持关闭") }
+            recordEvent("通知权限未授予，后台自动重连保持关闭")
+        }
+    }
+
     /** 记录一条脱敏诊断事件；调用方负责不传入凭据/URL/异常原文。 */
     private fun recordEvent(message: String) {
         val stamped = "${LocalTime.now().format(EVENT_TIME_FORMAT)} $message"
@@ -498,9 +574,14 @@ class PortalViewModel(
             accountStore: AccountStore? = null,
             settingsStore: SettingsStore? = null,
             wifiIdentity: WifiIdentityProvider? = null,
+            backgroundStateStore: BackgroundReconnectStateStore? = null,
+            backgroundLauncher: BackgroundReconnectLauncher? = null,
         ) = viewModelFactory {
             initializer {
-                PortalViewModel(core, bridgeFactory, accountStore, settingsStore, wifiIdentity)
+                PortalViewModel(
+                    core, bridgeFactory, accountStore, settingsStore, wifiIdentity,
+                    backgroundStateStore, backgroundLauncher,
+                )
             }
         }
     }

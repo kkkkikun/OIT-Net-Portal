@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Wi-Fi 信号 glyph：三道圆头弧 + 底部圆点。自适应图标可见区只有中心 66dp，
+         所有笔画必须落在该安全圆内，不能按 108dp 满幅构图。 -->
+    <path
+        android:pathData="M32.79,46.79 A30,30 0 0 1 75.21,46.79"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="5.5"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M39.15,53.15 A21,21 0 0 1 68.85,53.15"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="5.5"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M45.51,59.51 A12,12 0 0 1 62.49,59.51"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="5.5"
+        android:strokeLineCap="round" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M49,68 A5,5 0 0 1 59,68 A5,5 0 0 1 49,68 Z" />
+</vector>

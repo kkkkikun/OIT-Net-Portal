@@ -3,5 +3,7 @@
     <string name="notification_channel_name">校园网守护</string>
     <string name="notification_channel_description">显示校园网自动重连服务状态</string>
     <string name="notification_title">OIT 校园网守护</string>
-    <string name="notification_waiting_for_core">服务骨架已启动，Python 核心尚未接入</string>
+    <string name="notification_waiting_for_core">正在启动后台巡检</string>
+    <string name="notification_stop">停止</string>
+    <string name="notification_attention_title">校园网重连需要人工处理</string>
 </resources>

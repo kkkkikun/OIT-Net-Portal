@@ -29,63 +29,67 @@ class ChaquopyPortalCoreBridge private constructor(
         get() = !closed
 
     override suspend fun probe(): ProbeResult = withContext(Dispatchers.IO) {
-        pythonMutex.withLock {
-            val bridge = pythonBridge
-            if (closed || bridge == null) {
-                return@withLock ProbeResult(
-                    status = PortalStatus.UNKNOWN,
-                    detail = "Python 桥接已关闭",
-                )
-            }
-
-            try {
-                val result = bridge.callAttr("probe")
-                try {
-                    val status = result.stringValue("status")
-                    ProbeResult(
-                        status = status.toPortalStatus(),
-                        detail = status.toProbeDetail(),
+        callCoordinator.withSerializedCall {
+            pythonMutex.withLock {
+                val bridge = pythonBridge
+                if (closed || bridge == null) {
+                    return@withLock ProbeResult(
+                        status = PortalStatus.UNKNOWN,
+                        detail = "Python 桥接已关闭",
                     )
-                } finally {
-                    result.close()
                 }
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: PyException) {
-                ProbeResult(PortalStatus.UNKNOWN, "网络探测暂时不可用")
-            } catch (_: Exception) {
-                ProbeResult(PortalStatus.UNKNOWN, "网络探测暂时不可用")
+
+                try {
+                    val result = bridge.callAttr("probe")
+                    try {
+                        val status = result.stringValue("status")
+                        ProbeResult(
+                            status = status.toPortalStatus(),
+                            detail = status.toProbeDetail(),
+                        )
+                    } finally {
+                        result.close()
+                    }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: PyException) {
+                    ProbeResult(PortalStatus.UNKNOWN, "网络探测暂时不可用")
+                } catch (_: Exception) {
+                    ProbeResult(PortalStatus.UNKNOWN, "网络探测暂时不可用")
+                }
             }
         }
     }
 
     override suspend fun loginOnce(): LoginResult = withContext(Dispatchers.IO) {
-        pythonMutex.withLock {
-            val bridge = pythonBridge
-            if (closed || bridge == null) {
-                return@withLock LoginResult(
-                    outcome = LoginOutcome.FAILED,
-                    detail = "Python 桥接已关闭",
-                )
-            }
-
-            try {
-                val result = bridge.callAttr("login_once")
-                try {
-                    val outcome = result.stringValue("outcome")
-                    LoginResult(
-                        outcome = outcome.toLoginOutcome(),
-                        detail = outcome.toLoginDetail(),
+        callCoordinator.withSerializedCall {
+            pythonMutex.withLock {
+                val bridge = pythonBridge
+                if (closed || bridge == null) {
+                    return@withLock LoginResult(
+                        outcome = LoginOutcome.FAILED,
+                        detail = "Python 桥接已关闭",
                     )
-                } finally {
-                    result.close()
                 }
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: PyException) {
-                LoginResult(LoginOutcome.FAILED, "登录失败，请稍后重试")
-            } catch (_: Exception) {
-                LoginResult(LoginOutcome.FAILED, "登录失败，请稍后重试")
+
+                try {
+                    val result = bridge.callAttr("login_once")
+                    try {
+                        val outcome = result.stringValue("outcome")
+                        LoginResult(
+                            outcome = outcome.toLoginOutcome(),
+                            detail = outcome.toLoginDetail(),
+                        )
+                    } finally {
+                        result.close()
+                    }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: PyException) {
+                    LoginResult(LoginOutcome.FAILED, "登录失败，请稍后重试")
+                } catch (_: Exception) {
+                    LoginResult(LoginOutcome.FAILED, "登录失败，请稍后重试")
+                }
             }
         }
     }
@@ -165,6 +169,7 @@ class ChaquopyPortalCoreBridge private constructor(
 
     companion object {
         private val startupMutex = Mutex()
+        private val callCoordinator = PortalCoreCallCoordinator()
 
         suspend fun create(
             context: Context,

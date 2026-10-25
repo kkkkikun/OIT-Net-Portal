@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <!-- 品牌蓝对角渐变，中点接近主题 primary #2457C5 -->
+    <gradient
+        android:angle="315"
+        android:startColor="#3067E0"
+        android:endColor="#173D97" />
+</shape>

@@ -69,7 +69,7 @@ def test_screen_exposes_local_session_close_without_server_logout_claim():
     assert "onEndSession = viewModel::endLocalSession" in SCREEN_SOURCE
     assert 'Text("结束本次会话")' in SCREEN_SOURCE
     assert "不会向校园网服务器发送退出请求" in SCREEN_SOURCE
-    assert SCREEN_SOURCE.count("state.coreAvailable && !state.isBusy") >= 3
+    assert "(state.coreAvailable || state.backgroundAutoReconnectEnabled) && !state.isBusy" in SCREEN_SOURCE
 
 
 def test_screen_wires_account_management_and_prefill():
