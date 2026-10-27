@@ -45,8 +45,9 @@ Chaquopy pip 支持环境变量 `PIP_INDEX_URL`、`PIP_EXTRA_INDEX_URL` 和 `PIP
 
 ## 验证状态
 
+- 2026-10-27：后台自动重连 Android 9 真机验收（vivo V1936A，覆盖安装 10-25 APK）：默认关闭、开启+常驻通知、通知停止、后台断网监控与恢复（OFFLINE 不登录 / 恢复探测 ONLINE）、结束本地会话双端停止全部通过；CAPTIVE 自动认证与三次 FAILED 人工介入未自然触发（服务端会话保持在线 / 不破坏真实凭据），由 JUnit 覆盖；Android 13+ 通知权限无设备未覆盖。**厂商实测**：vivo 划卡即杀进程且 START_STICKY 不重启（符合设计预测）；vivo 默认禁用应用通知需手动开启。**发现 P1 待修**：进程被厂商杀死后重开 App 不恢复服务且状态文本陈旧（enabled=true 但服务未运行）。报告与截图：`android/validation/2026-10-27-background-reconnect/`。
 - 2026-10-25：VPN Wi-Fi 绑定改动后，完整 clean `assembleDebug` / `lintDebug` / `testDebugUnitTest` 通过；APK 内容检查确认包含 Android binder 与 `oit_portal/network.pyc`。真实 VPN + 校园网认证仍待真机验收。
 
 - 2026-10-24：pytest 264 用例全绿（无网络）+ Android `testDebugUnitTest` 48 例通过 + `assembleDebug`/`lintDebug` 通过。
 - 真机验收：第一、二轮已通过；第三轮新版 UI 的覆盖安装、三页导航、设置持久化、实际登录、Wi-Fi 断开/恢复、前台刷新和本地会话已通过 ADB 验证，视觉暂时接受，细节后续再优化。
-- 后台自动重连的开启/通知停止、后台断网自动认证、人工介入、结束会话和进程回收仍待真机验证；当前 ADB 设备未连接，未将这些路径记为通过。Android 13+ 通知权限路径也待可用设备验证。
+- 后台自动重连已于 2026-10-27 完成 Android 9 真机验收（见上）；Android 13+ 通知权限路径待可用设备验证。
