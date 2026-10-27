@@ -1,6 +1,6 @@
 # Architecture Spec — oit-portal
 
-> 版本: 1.2.0 | 最后更新: 2026-10-21
+> 版本: 1.3.0 | 最后更新: 2026-10-27（自 change `android-background-auto-reconnect` 同步：移动端凭据生命周期独立成需求）
 
 ## Purpose
 
@@ -106,10 +106,24 @@ Windows（计划任务）、Android Termux（Termux:Boot）、Linux（systemd �
 - **WHEN** 移动端首次安装、用户配置目录无 protocol.json
 - **THEN** mobile_sso.py MUST 仅解析当次页面的 CryptoJS AES 登录表单并即时提取加密参数；MUST NOT 读取/写入 protocol.json，MUST NOT 向多个候选端点试发凭据
 
-#### Scenario: 移动端凭据与密码生命周期
+### Requirement: 移动端凭据与密码生命周期
 
-- **WHEN** Android UI 处理用户密码
-- **THEN** 密码只保存在 Composition 的 remember 状态并在提交回调前清空；MUST NOT 持久化（凭据安全存储为未来工作，见 android/README.md 未接通清单）
+Android UI 中的密码 MUST 只短暂存在于 Composition 的 `remember` 状态并在提交回调前清空。需要保存时 MUST 通过既有 `AndroidKeystoreAccountStore` 加密存储；后台自动重连只能在用户显式开启后读取一个已保存账号，禁止明文持久化或扩大秘密使用范围。
+
+#### Scenario: Android UI 处理用户密码
+
+- **WHEN** Android UI 接收、提交或清理用户密码
+- **THEN** 密码只保存在 Composition 的 remember 状态并在提交回调前清空；UI 本身不得把明文密码写入偏好、诊断或日志
+
+#### Scenario: 已保存账号用于后台自动重连
+
+- **WHEN** 用户显式开启后台自动重连且存在已保存账号
+- **THEN** Service 仅通过 `AndroidKeystoreAccountStore` 解密读取按规则选中的一个账号，秘密只用于创建现有移动桥接；功能关闭、账号删除或会话失效后不得继续使用旧秘密
+
+#### Scenario: 未开启后台功能或存储不可用
+
+- **WHEN** 后台自动重连未开启，或 Keystore 账号存储无法安全读取
+- **THEN** 不得为后台认证读取或退化保存明文密码；存储不可用时按无可用账号处理并提示人工操作
 
 ### Requirement: 安全脱敏
 

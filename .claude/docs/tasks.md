@@ -29,15 +29,17 @@
 
 ## 待办
 
-- [ ] Android 后台自动重连真机验收（默认关闭/开启+通知/通知停止/后台断网自动认证/三次失败人工介入/结束会话/进程回收；Android 13+ 通知权限路径无设备，标注未覆盖）——设备 vivo V1936A（Android 9）已于 2026-10-27 接入 ADB，APK 用 `android/app/build/outputs/apk/debug/app-debug.apk`
+- [ ] **P1 缺陷修复**：进程被厂商杀死后重开 App 不恢复后台重连服务，且状态文本陈旧（enabled=true 但服务未运行，UI 显示"网络在线，后台巡检中"）——建议 Activity/ViewModel 初始化时按 enabled 状态恢复服务或纠正状态；2026-10-27 真机验收发现
 - [ ] Android UI 细节优化（用户反馈部分界面不够和谐，已确认暂缓）
+- [ ] Android 13+ 通知权限路径验证（待可用设备）
 
 ## 阻塞项
 
-- 无（原 ADB 设备阻塞已于 2026-10-27 解除）
+- 无
 
 ## 已完成（近期）
 
+- [x] **Android 后台自动重连真机验收**（任务 5.3，vivo V1936A / Android 9）：默认关闭、开启+通知、通知停止、断网监控恢复、结束会话通过；CAPTIVE 认证与三次失败未自然触发（JUnit 覆盖）；vivo 划卡杀进程不重启、默认禁通知已记录；发现 P1 重开不恢复服务缺陷 — 2026-10-27（`android/validation/2026-10-27-background-reconnect/`）
 - [x] VPN 分流三端落地（`network.create_session` 物理网卡绑定 + Android `CampusNetworkBinder` + 托盘/配置开关；`f4584bc` + `6688662`）— 2026-10-27 提交（改动 2026-10-25 完成并验证）
 - [x] `oit-portal configure` 交互配置命令（getpass 不回显，安全 TOML 写入；`f4584bc`）— 2026-10-27 提交
 - [x] Linux 离线安装包（`build_linux.sh` wheelhouse tar.gz + install 脚本重构 + 文档；`88b88d8`）— 2026-10-27 提交

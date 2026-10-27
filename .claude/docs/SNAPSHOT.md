@@ -4,7 +4,7 @@
 
 ## 项目概览
 
-**oit-portal** — 鄂尔多斯应用技术学院校园网静默自动登录 + 保活工具。Python 3.9+，单代码库多端共用（Windows 托盘/计划任务 / Android Termux / Linux systemd），另有**路线B Android 原生 App**（`android/`，Kotlin + Compose + Chaquopy 复用 Python 核心；Debug APK 已构建，三轮真机验收通过，后台自动重连已接通待真机验收）。
+**oit-portal** — 鄂尔多斯应用技术学院校园网静默自动登录 + 保活工具。Python 3.9+，单代码库多端共用（Windows 托盘/计划任务 / Android Termux / Linux systemd），另有**路线B Android 原生 App**（`android/`，Kotlin + Compose + Chaquopy 复用 Python 核心；三轮真机验收 + 后台自动重连真机验收均通过，2026-10-27）。
 
 核心机制：登录协议不写死，由 `oit-portal capture` 抓包向导自动发现，写入用户配置目录 `protocol.json`，运行时合并进 `sso.py` / `eportal.py` 顶部的 `CAPTURED` 常量块（占位标签 `<CAPTURE:Cx.y>` 对应 `docs/protocol-notes.md` 编号）。
 
@@ -85,9 +85,9 @@ openspec/                   # OpenSpec 规范体系（specs/ + changes/）
 ## 当前工作
 
 - **阶段**: 三端 + 路线B Android 功能齐备；VPN 分流（三端）、`configure` 交互命令、Linux 离线安装包均已落地并提交；Jetson Nano 已端到端部署正常运行
-- **进行中**: Android 后台自动重连真机验收（openspec change `android-background-auto-reconnect` 仅剩任务 5.3）——验收设备 vivo V1936A（Android 9）已于 2026-10-27 重新接入 ADB
-- **待验收路径**: 默认关闭 / 开启+常驻通知 / 通知停止 / 后台断网自动认证 / 三次失败人工介入（可模拟路径）/ 结束会话 / 进程回收；Android 13+ 通知权限路径仍无设备，标注未覆盖
-- **已归档 change**: android-ui-refresh（2026-10-27 归档）
+- **已完成**: Android 后台自动重连已于 2026-10-27 完成 Android 9 真机验收（vivo V1936A）：默认关闭/开启+通知/通知停止/断网监控恢复/结束会话全部通过；openspec change `android-background-auto-reconnect` 17/17 任务完成
+- **遗留问题**: P1——厂商杀死进程后重开 App 不恢复服务且状态文本陈旧（见 `android/validation/2026-10-27-background-reconnect/report.md`）；vivo 划卡杀进程 sticky 不重启与默认禁通知为厂商行为已记录；Android 13+ 通知权限路径待可用设备
+- **已归档 change**: android-ui-refresh（2026-10-27）、android-background-auto-reconnect（2026-10-27）
 
 ## 安全红线（改代码前自查）
 

@@ -29,5 +29,5 @@
 
 - [x] 5.1 运行完整 `python3 -m pytest` 与 Android `testDebugUnitTest`，修复仅限本变更导致的问题（依赖：1–4；验收：全部通过、无网络、既有用例无回归）
 - [x] 5.2 运行 `assembleDebug` 与 `lintDebug`，检查 manifest 未新增 boot/电池绕过能力、未新增第三方依赖（依赖：5.1；验收：构建和 Lint 通过）
-- [ ] 5.3 用 ADB 在 Android 9 真机验证默认关闭、开启/通知停止、后台断网自动重连、三次失败/人工介入可模拟路径、结束会话与进程回收；有 Android 13+ 环境时补通知授权（依赖：5.2；验收：保存截图和结果，未实机覆盖的路径明确标注）【阻塞：2026-10-24 ADB 无设备连接，待手机重新接入】
+- [x] 5.3 用 ADB 在 Android 9 真机验证默认关闭、开启/通知停止、后台断网自动重连、三次失败/人工介入可模拟路径、结束会话与进程回收；有 Android 13+ 环境时补通知授权（依赖：5.2；验收：保存截图和结果，未实机覆盖的路径明确标注）——**2026-10-27 完成**：vivo V1936A (Android 9) 实测，默认关闭/开启+通知/通知停止/断网监控与恢复/结束会话全部通过；CAPTIVE 自动认证（服务端会话未过期）与三次 FAILED（需破坏真实凭据）未自然触发，JUnit 覆盖；Android 13+ 无设备未覆盖；vivo 划卡杀进程且 sticky 不重启（符合设计预测，已记录）；发现 P1：重开 App 不恢复服务且状态文本陈旧；详见 `android/validation/2026-10-27-background-reconnect/report.md`
 - [x] 5.4 更新 `android/README.md`、`.claude/docs/SNAPSHOT.md` 与 `.claude/docs/tasks.md`，记录实测范围、厂商后台限制和回滚方式（依赖：5.3；验收：文档不再把已接通功能列为未接入，未验证项不写成通过）
