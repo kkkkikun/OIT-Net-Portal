@@ -6,11 +6,12 @@
 
 | 路径 | 作用 |
 |---|---|
-| `oit_portal/cli.py` | CLI 入口，子命令：`status / once / daemon / stop / login-info / capture` |
+| `oit_portal/cli.py` | CLI 入口，子命令：`status / once / daemon / stop / login-info / capture / configure` |
 | `oit_portal/tray.py` | Windows 托盘 App：Tkinter 账号设置、状态菜单、`TrayController` 后台线程；GUI 依赖延迟导入 |
 | `oit_portal/capture.py` | 一键抓包向导，自动发现协议并写入 `protocol.json` |
 | `oit_portal/discover.py` | 入口链路发现：统一处理 30x、`<meta refresh>`、JS `location.href=…` 三种跳转 |
 | `oit_portal/probe.py` | 三态探测（online / captive / offline），多探测点双确认 |
+| `oit_portal/network.py` | 统一认证 Session；`trust_env=False` + 可选物理 IPv4 `SourceAddressAdapter`（VPN 分流） |
 | `oit_portal/auth/flow.py` | 编排：`AuthFlow.ensure_online` = SSO 复用 → 账密 → ePortal 上线 → 复测 |
 | `oit_portal/auth/sso.py` | SSO 账密登录（含密码前端加密复现）。**协议常量在 `CAPTURED` 块** |
 | `oit_portal/auth/eportal.py` | ePortal `login_sso.jsp` 上线检查。**协议常量在 `CAPTURED` 块** |
@@ -25,18 +26,19 @@
 | `oit_portal/platform/{windows,termux}.py` | Windows HKCU 自启/Toast、Termux 平台细节（notify/wake_lock 为预留死代码；Linux 不需要 platform/linux.py） |
 | `oit_portal/paths.py` | 跨平台路径解析（APPDATA / XDG / 便携模式 / `OIT_PORTAL_HOME`） |
 | `oit_portal/log.py` | 日志：旋转文件 + 控制台；**永不记录明文密码与完整 cookie**（只用 `fingerprint()` 记 4 位） |
-| `tests/` | 275 个用例（无网络）。`FakeSession` + 多种 fixture 状态机 + Android UI/Windows 托盘契约测试 |
+| `tests/` | 294 个用例（无网络）。`FakeSession` + 多种 fixture 状态机 + Android UI/Windows 托盘/Linux 打包契约测试 |
 | `scripts/install_windows_tray.ps1` | Windows 托盘普通用户安装（HKCU 自启 + 启动） |
 | `scripts/build_windows.ps1` | Windows 原生 PyInstaller 独立 exe 构建 |
 | `scripts/install_windows.ps1` | Windows CLI 备用安装（注册计划任务 + 启动） |
 | `scripts/install_termux.sh` | Termux 一键装 + 电池豁免 |
-| `scripts/install_linux.sh` | Linux 一键装（pip --user + systemd 系统服务，拒绝 root 直跑） |
-| `scripts/uninstall_linux.sh` | Linux 卸载（`--purge` 删配置） |
-| `scripts/oit-portal.service.template` | systemd unit 模板（@USER@/@EXEC_START@/@HOME@ 占位符，禁加 PrivateTmp/ProtectHome） |
+| `scripts/install_linux.sh` | Linux 离线包/源码一键装（用户 venv + configure + systemd，拒绝 root） |
+| `scripts/build_linux.sh` | 按当前 Linux 架构构建含 wheelhouse 的 tar.gz 与 SHA256 |
+| `scripts/uninstall_linux.sh` | Linux 卸载（默认保留配置，`--purge` 删除） |
+| `scripts/oit-portal.service.template` | systemd unit 模板（@USER@/@EXEC_START@/@HOME@/@CONFIG_HOME@，禁加 PrivateTmp/ProtectHome） |
 | `docs/protocol-notes.md` | 协议确认记录（待确认 / 已确认），协议变更先查这里 |
 | `docs/capture-guide.md` | 抓包向导使用说明（用户文档） |
 | `docs/windows-setup.md` | Windows 托盘使用、exe 构建、CLI 备用部署和验收清单 |
-| `docs/linux-setup.md` | Linux 部署文档（systemd 服务、WiFi SSID 触发、故障排查） |
+| `docs/linux-setup.md` | Linux 离线包使用、原生架构构建、systemd 与故障排查 |
 | `android/` | 路线B Android 原生 App（Kotlin + Compose + Chaquopy）；Debug APK 已构建、第二轮真机功能验收通过，最新 UI/UX 改版待新一轮真机视觉验收，现状清单见 `android/README.md` |
 
 ## 常用命令
@@ -44,12 +46,14 @@
 ```bash
 pip install -e .                       # 开发安装（含 console_scripts: oit-portal）
 pip install -e '.[tray]'               # Windows 托盘依赖 + oit-portal-tray GUI 入口
+oit-portal configure                   # 交互配置账号密码（安全 TOML 写入）
 oit-portal capture                     # 首次：协议自配置（校内未登录状态跑）
 oit-portal status                      # 探测三态
 oit-portal once                        # 完整跑一次登录流程（退出码 0/1/2/3 见 cli.py）
 oit-portal daemon                      # 守护循环
 oit-portal stop                         # 停 daemon
-python -m pytest                       # 跑全部 275 个用例（无网络）
+bash scripts/build_linux.sh            # 当前架构 Linux 离线安装包
+python -m pytest                       # 跑全部 294 个用例（无网络）
 ```
 
 依赖：`requests`、`pycryptodome`（AES-128-CBC 复现，缺失时 `sso.py` 优雅降级）、`tomli`（仅 <3.11）。托盘可选依赖：`pystray`、`Pillow`；Tkinter 使用 Python 标准库。
@@ -115,7 +119,7 @@ python -m pytest                       # 跑全部 275 个用例（无网络）
 
 1. **配置文件不能入库**：`.gitignore` 已屏蔽 `config.toml` / `credentials.toml` / `session.json` / `*.log` / `*.har`。任何「记录凭证」的代码改动都要重新审视 `.gitignore` 是否需要加新模式。
 2. **日志脱敏**：所有日志里出现的密码、cookie、token，必须走 `log.fingerprint(secret)`（只打前 4 位 + 长度）。**不要**在 logger 调用里直接拼接原始 secret。
-3. **HTTP 直连不代理**：`cli._make_session()` 强制 `session.trust_env = False`——探测/认证必须直连校园 AC，否则会被代理劫持逻辑搞混。
+3. **HTTP 直连不代理**：所有认证 Session 统一走 `network.create_session()`，强制 `trust_env = False`；可选 `SourceAddressAdapter` 只绑定物理网卡，不修改 VPN/系统路由。
 4. **密码不在主配置文件**：`credentials.toml`（0600 权限）或 `OIT_PORTAL_PASSWORD` 环境变量。模板见 `config.example.toml`。
 
 ## 跨平台路径
@@ -137,7 +141,7 @@ python -m pytest                       # 跑全部 275 个用例（无网络）
 - **Vue 密码字段可能是 hidden**——`<input name="password" type="hidden" v-model="password">`，不是 `type="password"`。
 - **`once` 子命令需要密码才能用**——`allow_password=cfg.password is not None`，免密场景下走 `session.json` 复用。
 - **测试 jitter**：`make_config` 强制 `jitter_ratio = 0.0`，断言精确时间值。
-- **`Session.trust_env = False`**——加新 session 别忘了，否则代理环境会失真。
+- **新增认证 Session 必须调用 `network.create_session()`**——不要直接实例化 `requests.Session()`，否则代理禁用和 VPN 物理网卡绑定都会失效。
 - **Termux 的 `sys.platform` 也是 `"linux"`**——Linux 分支必须 `sys.platform == "linux" and not is_termux()`（`daemon._is_linux()` 已封装）。
 - **单实例锁冲突退出码是 0 不是 1**——systemd `Restart=on-failure` 下返回 1 会被当崩溃无限重启；「已有实例在跑」= 目标已达成（见 `daemon.run_daemon` 注释）。
 
