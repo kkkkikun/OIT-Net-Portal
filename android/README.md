@@ -16,6 +16,7 @@
 
 - `MainActivity` 初始仍使用 `UnavailablePortalCoreBridge`，只在用户显式提交账号和密码后，通过捕获 Application Context 的惰性工厂创建 `ChaquopyPortalCoreBridge`。
 - 网络变化监听：`registerDefaultNetworkCallback`（onCreate 注册、onDestroy 注销、幂等）；Wi-Fi 断开直接置离线，恢复/能力验证通过时做有界重试探测（3 次/2s），回到前台单次探测；只探测不自动登录。
+- VPN 下认证：`CampusNetworkBinder` 在每次 probe/loginOnce 期间通过 `bindProcessToNetwork` 绑定底层 Wi-Fi，`finally` 中解绑；不关闭 VPN、不修改其他流量。系统/VPN 的强制全隧道或锁定策略仍可能限制直连，需真机验收。
 - 凭据安全存储：`AndroidKeystoreCredentialStore`（AES-256/GCM，Keystore 密钥不可导出，私目录偏好只落密文）；「记住密码」默认不勾选、不自动登录，仅登录确认成功后按勾选保存/清除。
 - 设置页：网络恢复/回到前台自动刷新两个开关（`AppSettingsStore` 持久化，默认开启）。
 - 后台自动重连：默认关闭；用户显式开启后由前台 Service 显示常驻通知，复用脱敏 `probe/loginOnce` 做 60 秒在线巡检、30 秒离线兜底和 CAPTIVE 自动认证；300 秒最小重登间隔、指数退避、连续三次失败后人工介入。通知可停止，结束本地会话会同时停止 UI 与后台会话；不新增开机自启或厂商后台限制绕过。
@@ -40,8 +41,11 @@
 无 Gradle Wrapper，使用本机 Gradle 8.9（`~/.gradle/wrapper/dists/`）+ `ANDROID_HOME=~/Android/Sdk`；
 依赖解析经 HTTP 代理时只通过命令行 `-Dhttp(s).proxyHost/-Dhttp(s).proxyPort` 传入，不写入项目配置。
 依赖已缓存且当前网络不可达时，可在 Gradle 命令加 `--offline`，避免直连 Maven 重试造成长时间等待。
+Chaquopy pip 支持环境变量 `PIP_INDEX_URL`、`PIP_EXTRA_INDEX_URL` 和 `PIP_FIND_LINKS`，可临时指定镜像或本地 Android wheelhouse，默认索引行为不变。
 
 ## 验证状态
+
+- 2026-10-25：VPN Wi-Fi 绑定改动后，完整 clean `assembleDebug` / `lintDebug` / `testDebugUnitTest` 通过；APK 内容检查确认包含 Android binder 与 `oit_portal/network.pyc`。真实 VPN + 校园网认证仍待真机验收。
 
 - 2026-10-24：pytest 264 用例全绿（无网络）+ Android `testDebugUnitTest` 48 例通过 + `assembleDebug`/`lintDebug` 通过。
 - 真机验收：第一、二轮已通过；第三轮新版 UI 的覆盖安装、三页导航、设置持久化、实际登录、Wi-Fi 断开/恢复、前台刷新和本地会话已通过 ADB 验证，视觉暂时接受，细节后续再优化。

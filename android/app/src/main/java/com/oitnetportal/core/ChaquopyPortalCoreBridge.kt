@@ -19,6 +19,7 @@ import kotlinx.coroutines.withContext
  */
 class ChaquopyPortalCoreBridge private constructor(
     private var pythonBridge: PyObject?,
+    private val campusNetwork: CampusNetworkBinder,
 ) : PortalCoreBridge {
     private val pythonMutex = Mutex()
 
@@ -30,6 +31,7 @@ class ChaquopyPortalCoreBridge private constructor(
 
     override suspend fun probe(): ProbeResult = withContext(Dispatchers.IO) {
         callCoordinator.withSerializedCall {
+            campusNetwork.withCampusNetwork {
             pythonMutex.withLock {
                 val bridge = pythonBridge
                 if (closed || bridge == null) {
@@ -59,10 +61,12 @@ class ChaquopyPortalCoreBridge private constructor(
                 }
             }
         }
+        }
     }
 
     override suspend fun loginOnce(): LoginResult = withContext(Dispatchers.IO) {
         callCoordinator.withSerializedCall {
+            campusNetwork.withCampusNetwork {
             pythonMutex.withLock {
                 val bridge = pythonBridge
                 if (closed || bridge == null) {
@@ -91,6 +95,7 @@ class ChaquopyPortalCoreBridge private constructor(
                     LoginResult(LoginOutcome.FAILED, "登录失败，请稍后重试")
                 }
             }
+        }
         }
     }
 
@@ -188,7 +193,7 @@ class ChaquopyPortalCoreBridge private constructor(
                         val module = Python.getInstance().getModule("oit_portal.mobile_bridge")
                         try {
                             val bridge = module.callAttr("create_mobile_bridge", username, password)
-                            ChaquopyPortalCoreBridge(bridge)
+                            ChaquopyPortalCoreBridge(bridge, CampusNetworkBinder(context))
                         } finally {
                             module.close()
                         }

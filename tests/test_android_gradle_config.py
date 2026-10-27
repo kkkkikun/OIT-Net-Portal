@@ -34,6 +34,15 @@ def test_python_package_install_uses_staged_minimal_project():
     assert "dependsOn(stagePythonProject)" in APP_GRADLE
 
 
+def test_pip_index_can_be_overridden_without_changing_default_build():
+    assert 'providers.environmentVariable("PIP_INDEX_URL")' in APP_GRADLE
+    assert 'options("--index-url", customIndex.get())' in APP_GRADLE
+    assert 'providers.environmentVariable("PIP_EXTRA_INDEX_URL")' in APP_GRADLE
+    assert 'options("--extra-index-url", extraIndex.get())' in APP_GRADLE
+    assert 'providers.environmentVariable("PIP_FIND_LINKS")' in APP_GRADLE
+    assert 'options("--find-links", findLinks.get())' in APP_GRADLE
+
+
 def test_no_literal_placeholder_path_remains():
     placeholder = 'install("' + "." * 3 + '")'
     assert placeholder not in APP_GRADLE

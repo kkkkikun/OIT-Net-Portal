@@ -37,6 +37,18 @@ chaquopy {
     defaultConfig {
         version = "3.10"
         pip {
+            val customIndex = providers.environmentVariable("PIP_INDEX_URL")
+            val extraIndex = providers.environmentVariable("PIP_EXTRA_INDEX_URL")
+            val findLinks = providers.environmentVariable("PIP_FIND_LINKS")
+            if (customIndex.isPresent) {
+                options("--index-url", customIndex.get())
+            }
+            if (extraIndex.isPresent) {
+                options("--extra-index-url", extraIndex.get())
+            }
+            if (findLinks.isPresent) {
+                options("--find-links", findLinks.get())
+            }
             // 仅安装构建暂存目录，避免把整个仓库根目录作为 Gradle 输入。
             install(pythonProjectDir.get().asFile.absolutePath)
         }
