@@ -14,6 +14,7 @@ RestartSec=5
 # 沙箱化会让 `oit-portal stop` 和日志写入失效。
 WorkingDirectory=@HOME@
 Environment=PYTHONUNBUFFERED=1
+Environment=OIT_PORTAL_HOME=@CONFIG_HOME@
 
 [Install]
 WantedBy=multi-user.target

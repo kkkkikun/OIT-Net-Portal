@@ -1,94 +1,129 @@
 #!/usr/bin/env bash
-# OIT 校园网自动登录 — Linux（systemd）一键安装
-# 用法：以「运行 daemon 的目标普通用户」身份，在项目目录执行：
-#   bash scripts/install_linux.sh
-# 装包/配置/凭据写入当前用户目录；写 systemd unit 的步骤会自动调用 sudo。
-set -eu
+# OIT 校园网自动登录 — Linux 离线包/源码一键安装
+set -euo pipefail
+
+SKIP_LOGIN=false
+case "${1:-}" in
+  "" ) ;;
+  --skip-login) SKIP_LOGIN=true ;;
+  -h|--help)
+    echo "用法：bash install_linux.sh [--skip-login]"
+    exit 0
+    ;;
+  *) echo "错误：未知参数 $1" >&2; exit 2 ;;
+esac
 
 err() { echo "错误：$*" >&2; exit 1; }
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+if [ -d "$SCRIPT_DIR/wheelhouse" ]; then
+  PACKAGE_DIR="$SCRIPT_DIR"
+  PROJECT_ROOT=""
+else
+  PACKAGE_DIR=""
+  PROJECT_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+fi
+CONFIG_TEMPLATE="${PACKAGE_DIR:-$PROJECT_ROOT}/config.example.toml"
+SERVICE_TEMPLATE="${PACKAGE_DIR:-$PROJECT_ROOT/scripts}/oit-portal.service.template"
+[ -f "$CONFIG_TEMPLATE" ] || err "安装包缺少 config.example.toml"
+[ -f "$SERVICE_TEMPLATE" ] || err "安装包缺少 oit-portal.service.template"
 
-# ── 0. 环境与身份检查 ──────────────────────────────────────
-command -v systemctl >/dev/null || err "需要 systemd（本脚本仅支持 systemd 的 Linux）"
+command -v systemctl >/dev/null || err "需要 systemd（本安装器仅支持 systemd Linux）"
 [ -z "${TERMUX_VERSION:-}" ] || err "检测到 Termux，请改用 scripts/install_termux.sh"
-[ "$(id -u)" -ne 0 ] || err "请勿以 root 运行：daemon 将以执行本脚本的用户身份运行，
-    配置/凭据也会写入该用户目录。请先 su - <目标用户> 后重跑
-    （写 systemd unit 的步骤会自动调用 sudo）"
-echo "==> [1/7] 检查 python3（>= 3.9）"
-command -v python3 >/dev/null || err "未找到 python3，请先: sudo apt install python3 python3-pip"
+[ "$(id -u)" -ne 0 ] || err "请勿以 root 运行；请以使用校园网的普通用户执行，脚本仅在写 systemd 服务时调用 sudo"
+command -v sudo >/dev/null || err "安装系统服务需要 sudo"
+command -v python3 >/dev/null || err "未找到 python3；Ubuntu/Debian 可先执行：sudo apt install python3 python3-venv"
 python3 -c 'import sys; raise SystemExit(0 if sys.version_info[:2] >= (3, 9) else 1)' \
   || err "需要 Python >= 3.9（当前 $(python3 -V 2>&1)）"
-python3 -m pip --version >/dev/null 2>&1 || err "缺少 pip，请先: sudo apt install python3-pip"
+if [ -n "$PACKAGE_DIR" ]; then
+  EXPECTED_PYTHON="$(python3 -c 'import sys; from pathlib import Path; lines=Path(sys.argv[1]).read_text().splitlines(); print(next(x.split("=",1)[1] for x in lines if x.startswith("build_python=")))' "$PACKAGE_DIR/BUILD-INFO")"
+  EXPECTED_PYTHON="${EXPECTED_PYTHON%.*}"
+  CURRENT_PYTHON="$(python3 -c 'import sys; print(".".join(map(str, sys.version_info[:2])))')"
+  [ "$EXPECTED_PYTHON" = "$CURRENT_PYTHON" ] \
+    || err "此离线包按 Python $EXPECTED_PYTHON 构建，当前为 $CURRENT_PYTHON；请使用匹配版本或从源码安装"
+fi
 
-# ── 1. 安装本项目（--user，不碰系统 site-packages，无需 sudo）──
-echo "==> [2/7] 安装 oit-portal 及依赖（pip --user）"
-python3 -m pip install --quiet --user .
-# 三级解析 console script 绝对路径（systemd 无用户 PATH）
-EXEC_START="$(command -v oit-portal || true)"
-[ -n "$EXEC_START" ] || EXEC_START="$HOME/.local/bin/oit-portal"
-[ -x "$EXEC_START" ] || EXEC_START="$(python3 -c 'import sysconfig; print(sysconfig.get_path("scripts"))')/oit-portal"
-[ -x "$EXEC_START" ] || err "找不到 oit-portal 可执行文件（pip --user 安装后应在 ~/.local/bin/）"
-echo "    ExecStart = $EXEC_START"
+CFG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/oit-portal"
+DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/oit-portal"
+VENV_DIR="$DATA_DIR/venv"
+EXEC_START="$VENV_DIR/bin/oit-portal"
+BIN_LINK="$HOME/.local/bin/oit-portal"
+UNIT_TMP=""
 
-# ── 2. 配置文件 ─────────────────────────────────────────────
-CFG_DIR="${HOME}/.config/oit-portal"
-mkdir -p "$CFG_DIR"
-echo "==> [3/7] 生成配置 $CFG_DIR"
-if [ ! -f "$CFG_DIR/config.toml" ]; then
-  cp "$(dirname "$0")/../config.example.toml" "$CFG_DIR/config.toml"
-  echo "    已复制 config.example.toml -> config.toml"
+cleanup() {
+  [ -z "$UNIT_TMP" ] || rm -f "$UNIT_TMP"
+}
+trap cleanup EXIT
+
+echo "==> [1/6] 准备用户目录与 Python 环境"
+mkdir -p "$CFG_DIR/logs" "$DATA_DIR" "$HOME/.local/bin"
+if [ ! -x "$VENV_DIR/bin/python" ]; then
+  python3 -m venv "$VENV_DIR" 2>/dev/null \
+    || err "无法创建 venv；Ubuntu/Debian 请执行：sudo apt install python3-venv"
+fi
+
+echo "==> [2/6] 安装 oit-portal 与依赖"
+if [ -n "$PACKAGE_DIR" ]; then
+  "$VENV_DIR/bin/python" -m pip install --quiet --upgrade \
+    --no-index --find-links="$PACKAGE_DIR/wheelhouse" oit-portal
+  echo "    已使用安装包内依赖（无需联网）"
 else
-  echo "    config.toml 已存在，保留"
+  "$VENV_DIR/bin/python" -m pip install --quiet --upgrade "$PROJECT_ROOT"
 fi
+[ -x "$EXEC_START" ] || err "安装后未找到 $EXEC_START"
+ln -sfn "$EXEC_START" "$BIN_LINK"
 
-read -rp "请输入校园网账号（学号/工号，直接回车保持不变）: " USERNAME
-if [ -n "$USERNAME" ]; then
-  sed -i "s/^username = .*/username = \"$USERNAME\"/" "$CFG_DIR/config.toml"
+echo "==> [3/6] 配置校园网账号"
+if [ ! -f "$CFG_DIR/config.toml" ]; then
+  cp "$CONFIG_TEMPLATE" "$CFG_DIR/config.toml"
 fi
+OIT_PORTAL_HOME="$CFG_DIR" "$EXEC_START" configure
 
-echo "==> [4/7] 写入凭据（密码只存本机，权限 600）"
-read -rsp "请输入校园网密码（输入不回显）: " PASSWORD; echo
-# 用 chmod 直接收紧权限（不用 umask 177，避免 umask 污染到
-# 后续 oit-portal 子进程导致日志目录创建失败）
-printf 'password = "%s"\n' "$PASSWORD" > "$CFG_DIR/credentials.toml"
-chmod 600 "$CFG_DIR/credentials.toml"
-unset PASSWORD
+echo "==> [4/6] 注册 systemd 系统服务"
+"$EXEC_START" stop 2>/dev/null || true
+UNIT_TMP="$(mktemp)"
+TEMPLATE="$SERVICE_TEMPLATE" OUTPUT="$UNIT_TMP" TARGET_USER="$(id -un)" \
+  TARGET_HOME="$HOME" TARGET_EXEC="$EXEC_START" TARGET_CONFIG="$CFG_DIR" \
+  "$VENV_DIR/bin/python" - <<'PY'
+import os
+from pathlib import Path
 
-# ── 3. systemd 系统服务 ────────────────────────────────────
-echo "==> [5/7] 安装 systemd 服务（需要 sudo）"
-command -v sudo >/dev/null || err "安装系统服务需要 sudo（sudo apt install sudo）"
-# 先停掉可能在跑的手动 daemon，避免 enable --now 撞锁后服务显示
-# inactive(dead)（锁冲突是「目标已达成」，退出码 0，systemd 不会重启）
-oit-portal stop 2>/dev/null || true
-sed -e "s|@USER@|$(id -un)|g" \
-    -e "s|@EXEC_START@|$EXEC_START|g" \
-    -e "s|@HOME@|$HOME|g" \
-    "$(dirname "$0")/oit-portal.service.template" \
-  | sudo tee /etc/systemd/system/oit-portal.service >/dev/null
+text = Path(os.environ["TEMPLATE"]).read_text(encoding="utf-8")
+for key, value in {
+    "@USER@": os.environ["TARGET_USER"],
+    "@HOME@": os.environ["TARGET_HOME"],
+    "@EXEC_START@": os.environ["TARGET_EXEC"],
+    "@CONFIG_HOME@": os.environ["TARGET_CONFIG"],
+}.items():
+    text = text.replace(key, value)
+Path(os.environ["OUTPUT"]).write_text(text, encoding="utf-8")
+PY
+sudo install -m 644 "$UNIT_TMP" /etc/systemd/system/oit-portal.service
 sudo systemctl daemon-reload
 sudo systemctl enable --now oit-portal.service
+sudo systemctl restart oit-portal.service
+
+echo "==> [5/6] 检查服务"
 systemctl --no-pager --full status oit-portal.service || true
 
-# 预创建日志目录（避免 oit-portal 启动时遇到权限问题）
-mkdir -p "$CFG_DIR/logs"
+if [ "$SKIP_LOGIN" = false ]; then
+  echo "==> [6/6] 试跑登录（非校园网或需验证码时可稍后重试）"
+  "$EXEC_START" once || true
+else
+  echo "==> [6/6] 已跳过安装后试登"
+fi
 
-# ── 4. 立即试跑一次 ─────────────────────────────────────────
-echo "==> [6/7] 试跑登录（当前 WiFi 为校园网时才会真正登录）"
-oit-portal once || true
+cat <<TIP
 
-echo "==> [7/7] 完成"
-
-cat <<'TIP'
-
-✅ 安装完成！daemon 已作为 systemd 系统服务运行，开机自启 + 崩溃自动重启。
+安装完成：systemd 服务已设置为开机自启。
+命令入口：$BIN_LINK（如找不到，请把 ~/.local/bin 加入 PATH）
 
 常用操作：
-   systemctl status oit-portal          查看服务状态
-   journalctl -u oit-portal -f          实时日志（stdout/stderr）
-   oit-portal status / once / stop      与往常一样
-日志文件: ~/.config/oit-portal/logs/oit-portal.log
+  oit-portal status                 查看网络状态
+  oit-portal configure              修改账号密码
+  sudo systemctl restart oit-portal 修改配置后重启服务
+  systemctl status oit-portal       查看服务状态
+  journalctl -u oit-portal -f       实时日志
 
-WiFi SSID 触发（可选，连上校园网 WiFi 时立即重登）:
-   编辑 ~/.config/oit-portal/config.toml 的 wifi_ssid = "你的校园网SSID"
-   需系统装有 NetworkManager（nmcli）或 wireless-tools（iwgetid），
-   都没有则该功能静默失效，不影响登录。详见 docs/linux-setup.md
+配置文件：$CFG_DIR/config.toml
+日志文件：$CFG_DIR/logs/oit-portal.log
 TIP
