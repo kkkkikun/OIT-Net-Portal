@@ -1,12 +1,16 @@
 # SNAPSHOT.md — 项目状态快照
 
-> 最后更新: 2026-10-24 | 验证: pytest 264 passed (无网络) + Android testDebugUnitTest 48 例 + assembleDebug + lintDebug
+> 最后更新: 2026-10-27 | 验证: pytest 294 passed (无网络) + Android testDebugUnitTest 48 例 + clean assembleDebug/lintDebug（2026-10-25）
 
 ## 项目概览
 
-**oit-portal** — 鄂尔多斯应用技术学院校园网静默自动登录 + 保活工具。Python 3.9+，单代码库多端共用（Windows 计划任务 / Android Termux / Linux systemd），另有**路线B Android 原生 App**（`android/`，Kotlin + Compose + Chaquopy 复用 Python 核心；Debug APK 已构建，手动登录与新版 UI 已做真机验证，后台自动重连代码已接通、待真机后台生命周期验收）。
+**oit-portal** — 鄂尔多斯应用技术学院校园网静默自动登录 + 保活工具。Python 3.9+，单代码库多端共用（Windows 托盘/计划任务 / Android Termux / Linux systemd），另有**路线B Android 原生 App**（`android/`，Kotlin + Compose + Chaquopy 复用 Python 核心；Debug APK 已构建，三轮真机验收通过，后台自动重连已接通待真机验收）。
 
 核心机制：登录协议不写死，由 `oit-portal capture` 抓包向导自动发现，写入用户配置目录 `protocol.json`，运行时合并进 `sso.py` / `eportal.py` 顶部的 `CAPTURED` 常量块（占位标签 `<CAPTURE:Cx.y>` 对应 `docs/protocol-notes.md` 编号）。
+
+**VPN 分流（2026-10-25 落地）**：VPN 开启时认证不中断——Windows/Linux 认证 socket 经 `network.create_session()` 可绑定物理网卡（`SourceAddressAdapter`），Android 端 `CampusNetworkBinder` 在 probe/loginOnce 期间 `bindProcessToNetwork` 绑定底层 Wi-Fi；不关闭 VPN、不改变其他流量。
+
+**Jetson Nano 已完成端到端部署并正常运行**（2026-10-27 用户确认）。
 
 ## 技术栈
 
@@ -14,26 +18,26 @@
 |---|---|
 | 语言 | Python 3.9+ |
 | 依赖 | requests, pycryptodome (可选 AES), tomli (<3.11) |
-| 测试 | pytest，264 用例全部无网络（FakeSession + fixture 状态机 + Android 静态契约测试）；Android 另有 48 例 JUnit 单测 |
-| 打包 | pyproject.toml + setuptools，console_scripts: oit-portal |
+| 测试 | pytest，294 用例全部无网络（FakeSession + fixture 状态机 + Android/Windows 托盘/Linux 打包静态契约测试）；Android 另有 48 例 JUnit 单测 |
+| 打包 | pyproject.toml + setuptools，console_scripts: oit-portal；Linux 离线包 `scripts/build_linux.sh`（wheelhouse tar.gz + SHA256）；Windows PyInstaller exe |
 | 格式化 | 无强制工具，遵循现有代码风格 |
 
 ## Git 状态
 
-- 分支: android-app（UI/UX 重设计与后台自动重连改动尚未提交）
+- 分支: android-app（工作区干净，VPN 分流 / configure / Linux 离线包已提交）
 - 最近提交:
-  - `e22ed73` fix(portal): 兼容学生网 AC 漏标 Content-Encoding 的 gzip 响应
-  - `2d80439` fix(android): stage Python sources for debug build
-  - `f821231` wip(android): normalize mobile SSO redirects and preserve auth code
-  - `8cfe943` wip(android): fail closed on uncertain mobile password encryption
-  - `4368b1d` wip(android): resolve first-run SSO form without protocol file
-  - `2333cb3` feat(android): 建立 Compose 应用骨架（路线B 起点，2026-10-18）
+  - `dc3c3e6` docs: 同步 VPN 分流 / configure / Linux 离线包说明与 294 用例基线
+  - `88b88d8` feat(linux): 离线安装包与安装脚本重构
+  - `6688662` feat(android): 认证期间绑定物理 Wi-Fi 绕过 VPN 路由
+  - `f4584bc` feat(portal): VPN 分流认证 Session 与 configure 交互配置命令
+  - `fa9fd99` docs: sync project status and platform guidance
+  - `54c7b6e` feat(windows): add system tray application
 
 ## 目录结构
 
 ```
 oit_portal/
-├── cli.py                  # CLI 入口: status/once/daemon/stop/login-info/capture
+├── cli.py                  # CLI 入口: status/once/daemon/stop/login-info/capture/configure
 ├── capture.py              # 抓包向导（_HEURISTIC_ENDPOINTS 等 fallback 常量）
 ├── discover.py             # 入口链路发现（302 / meta refresh / JS 三跳）
 ├── probe.py                # 三态探测 online/captive/offline，多探测点双确认
@@ -41,8 +45,10 @@ oit_portal/
 ├── keepalive.py            # 心跳
 ├── htmlutil.py             # HTML/内联 JS 解析（find_aes / form_action / analyze_form）
 ├── protocol_overrides.py   # protocol.json 合并进 CAPTURED（仅替换已有键）
+├── network.py              # 统一认证 Session：trust_env=False + 可选物理网卡绑定（VPN 分流）
 ├── mobile_bridge.py        # 路线B 移动端桥接（脱敏探测/单次登录，无 capture/daemon）
 ├── mobile_sso.py           # 移动端首装 SSO 适配器（不读 protocol.json，fail-closed 加密）
+├── tray.py                 # Windows 托盘 App（账号设置含 VPN 直连开关、状态菜单、后台线程）
 ├── config.py / log.py / paths.py
 ├── auth/
 │   ├── flow.py             # AuthFlow.ensure_online 编排
@@ -53,11 +59,13 @@ oit_portal/
 └── platform/
     ├── windows.py          # 计划任务细节
     └── termux.py           # Termux 启动/守护 + 电池豁免
-tests/                      # 19 个测试文件（含 test_mobile_* 与 test_android_* 契约测试）
-android/                    # 路线B 原生 App（Kotlin + Compose + Chaquopy，WIP 未编译）
-scripts/                    # install_windows.ps1 / install_termux.sh / install_linux.sh
-                            # uninstall_linux.sh / oit-portal.service.template / boot template
-docs/                       # protocol-notes.md / capture-guide.md / 双端部署文档
+android/                    # 路线B 原生 App（Kotlin + Compose + Chaquopy）
+└── .../core/CampusNetworkBinder.kt  # 认证期间 bindProcessToNetwork 绑定物理 Wi-Fi
+tests/                      # 测试文件（含 test_mobile_* / test_android_* / test_linux_* 契约测试）
+scripts/                    # install_windows.ps1 / build_windows.ps1 / install_windows_tray.ps1
+                            # install_termux.sh / build_linux.sh / install_linux.sh
+                            # uninstall_linux.sh / oit-portal.service.template
+docs/                       # protocol-notes.md / capture-guide.md / 三端部署文档
 openspec/                   # OpenSpec 规范体系（specs/ + changes/）
 ```
 
@@ -70,17 +78,20 @@ openspec/                   # OpenSpec 规范体系（specs/ + changes/）
 | 改入口跳转 | `oit_portal/discover.py` + `tests/test_discover.py` |
 | 改路径/守护 | `oit_portal/paths.py` + `platform/` + `docs/{windows,termux}-setup.md` |
 | 改表单解析 | `oit_portal/htmlutil.py` + `tests/test_htmlutil.py` |
+| 改 Session/VPN 分流 | `oit_portal/network.py` + `tests/test_network.py`（新 Session 禁止直接 `requests.Session()`） |
+| 改 Android 绑定 | `android/.../CampusNetworkBinder.kt` + `tests/test_android_vpn_bypass_contract.py` |
+| 改 Linux 打包 | `scripts/build_linux.sh` + `install_linux.sh` + `tests/test_linux_packaging.py` |
 
 ## 当前工作
 
-- **阶段**: 协议自配置机制已完整落地并通过该校实测；Linux（systemd）支持已落地
-- **进行中**: 路线B Android 原生 App——手动登录、多账号、Keystore 凭据、自动刷新、诊断、三入口 UI 均已完成并真机验证（2026-10-24 第三轮 ADB 验收通过，视觉暂接受待后续优化）。2026-10-24 完成后台自动重连：前台 Service + 有界调度器（60s 在线巡检 / 30s 离线兜底 / CAPTIVE 才登录 / 300s 最小重登 / 三次失败人工介入），默认关闭 + 通知授权 + 通知停止，不改移动桥接边界。pytest 264 passed、Android 单测 48 passed、assembleDebug 与 lintDebug 通过；经两轮代码审查修复启停竞态与节流重置。Capture 仍延后。
-- **待实机验证**: Android 后台自动重连真机验收（开启/通知停止/后台断网自动认证/人工介入/结束会话/进程回收；Android 13+ 通知权限路径）——当前 ADB 无设备连接，待手机重新接入后用 `android/app/build/outputs/apk/debug/app-debug.apk` 验证；Jetson Nano 端到端部署（install_linux.sh）
-- **阻塞**: 后台自动重连真机验收依赖手机重新连接 ADB
+- **阶段**: 三端 + 路线B Android 功能齐备；VPN 分流（三端）、`configure` 交互命令、Linux 离线安装包均已落地并提交；Jetson Nano 已端到端部署正常运行
+- **进行中**: Android 后台自动重连真机验收（openspec change `android-background-auto-reconnect` 仅剩任务 5.3）——验收设备 vivo V1936A（Android 9）已于 2026-10-27 重新接入 ADB
+- **待验收路径**: 默认关闭 / 开启+常驻通知 / 通知停止 / 后台断网自动认证 / 三次失败人工介入（可模拟路径）/ 结束会话 / 进程回收；Android 13+ 通知权限路径仍无设备，标注未覆盖
+- **已归档 change**: android-ui-refresh（2026-10-27 归档）
 
 ## 安全红线（改代码前自查）
 
 1. 配置文件不入库（.gitignore 已屏蔽 config.toml / credentials.toml / session.json / *.log / *.har）
 2. 日志脱敏：密码/cookie/token 只能经 `log.fingerprint()`（前 4 位 + 长度）
-3. 所有 `requests.Session` 必须 `trust_env = False`
+3. 所有认证 Session 必须走 `network.create_session()`（内含 `trust_env = False` + 可选物理网卡绑定）
 4. 密码只存 `credentials.toml`（0600）或 `OIT_PORTAL_PASSWORD` 环境变量

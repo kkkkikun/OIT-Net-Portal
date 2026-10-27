@@ -1,6 +1,6 @@
 # tasks.md — 全局任务追踪
 
-> 最后更新: 2026-10-24
+> 最后更新: 2026-10-27
 > 与 openspec/changes/ 的关系: 大改动走 `/opsx:propose` 生成 change 提案（openspec/changes/<name>/）；这里只记跨 change 的长期事项与日常待办。
 
 ## 进行中
@@ -29,16 +29,20 @@
 
 ## 待办
 
-- [ ] Android 后台自动重连真机验收（开启/通知停止/后台断网自动认证/人工介入/结束会话/进程回收；Android 13+ 通知权限路径）——手机重新连接 ADB 后安装 `android/app/build/outputs/apk/debug/app-debug.apk` 执行
+- [ ] Android 后台自动重连真机验收（默认关闭/开启+通知/通知停止/后台断网自动认证/三次失败人工介入/结束会话/进程回收；Android 13+ 通知权限路径无设备，标注未覆盖）——设备 vivo V1936A（Android 9）已于 2026-10-27 接入 ADB，APK 用 `android/app/build/outputs/apk/debug/app-debug.apk`
 - [ ] Android UI 细节优化（用户反馈部分界面不够和谐，已确认暂缓）
-- [ ] Jetson Nano 实机端到端验证（install_linux.sh 全流程，清单见 docs/linux-setup.md）
 
 ## 阻塞项
 
-- 后台自动重连真机验收：当前 ADB 无设备连接，待手机重新接入
+- 无（原 ADB 设备阻塞已于 2026-10-27 解除）
 
 ## 已完成（近期）
 
+- [x] VPN 分流三端落地（`network.create_session` 物理网卡绑定 + Android `CampusNetworkBinder` + 托盘/配置开关；`f4584bc` + `6688662`）— 2026-10-27 提交（改动 2026-10-25 完成并验证）
+- [x] `oit-portal configure` 交互配置命令（getpass 不回显，安全 TOML 写入；`f4584bc`）— 2026-10-27 提交
+- [x] Linux 离线安装包（`build_linux.sh` wheelhouse tar.gz + install 脚本重构 + 文档；`88b88d8`）— 2026-10-27 提交
+- [x] Jetson Nano 端到端部署完成，正常运行 — 2026-10-27（用户确认）
+- [x] 工作区积压改动拆 4 个提交 + 文档同步（`dc3c3e6`）；openspec change `android-ui-refresh` 归档 — 2026-10-27
 - [x] Android UI/UX 第三轮真机验收（覆盖安装、三页导航、设置持久化、实际登录、Wi-Fi 断开/恢复、前台刷新、本地会话；视觉暂接受）— 2026-10-24（ADB 自动验证 + 截图）
 - [x] Android UI/UX 重设计（连接 / 设置 / 诊断三入口、Material 3 主题）— 2026-10-23；258 pytest + 31 Android 单测 + Debug 构建 + Lint 全通过
 - [x] 移动端桥接 + 首装 SSO 适配器（`mobile_bridge.py` / `mobile_sso.py`）— 2026-10-20
