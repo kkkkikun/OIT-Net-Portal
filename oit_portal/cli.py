@@ -1,4 +1,4 @@
-"""CLI 入口：oit-portal <status|once|daemon|stop|login-info>"""
+"""CLI 入口：oit-portal <status|once|daemon|stop|login-info|capture|configure>"""
 
 from __future__ import annotations
 
@@ -10,9 +10,10 @@ import requests
 
 from . import __version__
 from .auth.flow import AuthFlow, FlowOutcome
-from .config import Config, load_config
+from .config import Config, load_config, save_account
 from .daemon import run_daemon, stop_daemon
 from .log import setup_logging
+from .network import create_session
 from .paths import AppPaths, resolve_paths
 from .probe import probe
 
@@ -46,6 +47,7 @@ def _build_parser() -> argparse.ArgumentParser:
     sub.add_parser("stop", help="停止运行中的 daemon")
     sub.add_parser("login-info", help="打印人工登录引导（触发 URL 等）")
     sub.add_parser("capture", help="一键抓包向导：自动发现登录协议并自配置（校内未登录状态运行）")
+    sub.add_parser("configure", help="交互式设置或更新校园网账号密码")
     return parser
 
 
@@ -55,10 +57,7 @@ def _load(paths: AppPaths, args: argparse.Namespace) -> Config:
 
 
 def _make_session(cfg: Config) -> requests.Session:
-    session = requests.Session()
-    session.headers["User-Agent"] = cfg.advanced.user_agent
-    session.trust_env = False  # 探测/认证直连，不走系统代理
-    return session
+    return create_session(cfg)
 
 
 def cmd_status(cfg: Config, paths: AppPaths) -> int:
@@ -93,6 +92,22 @@ def cmd_login_info(cfg: Config, paths: AppPaths) -> int:
     return EXIT_OK
 
 
+def cmd_configure(cfg: Config, paths: AppPaths) -> int:
+    import getpass
+
+    try:
+        default = f" [{cfg.username}]" if cfg.username else ""
+        username = input(f"校园网账号{default}（回车保留）: ").strip() or cfg.username or ""
+        password = getpass.getpass("校园网密码（输入不回显，回车保留）: ") or cfg.password or ""
+        save_account(paths.config, paths.credentials, username, password)
+    except (ValueError, OSError, EOFError, KeyboardInterrupt) as exc:
+        print(f"\n配置失败：{exc}", file=sys.stderr)
+        return EXIT_ERROR
+    print(f"配置已保存：{paths.config}")
+    print(f"凭据已保存：{paths.credentials}")
+    return EXIT_OK
+
+
 COMMANDS = {
     "status": cmd_status,
     "once": cmd_once,
@@ -100,6 +115,7 @@ COMMANDS = {
     "stop": lambda cfg, paths: stop_daemon(paths),
     "login-info": cmd_login_info,
     "capture": cmd_capture,
+    "configure": cmd_configure,
 }
 
 

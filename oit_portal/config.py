@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 import re
@@ -64,6 +65,8 @@ class AdvancedConfig:
     user_agent: str = DEFAULT_USER_AGENT
     timeout_sec: int = 8
     eportal_host: str = "172.16.11.54"
+    bypass_vpn: bool = False            # 认证请求绑定物理网卡，不经过系统 VPN 路由
+    direct_source_ip: str = ""          # 物理网卡 IPv4；空 = 自动识别
 
 
 @dataclass
@@ -138,39 +141,60 @@ def _toml_string(value: str) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
+def _update_toml_section(path: Path, section_name: str, values: dict[str, str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = (path.read_text(encoding="utf-8") if path.is_file() else "").splitlines(keepends=True)
+    section = None
+    section_start = None
+    found = set()
+    for index, line in enumerate(lines):
+        match = re.match(r"^\s*\[([^]]+)\]", line)
+        if match:
+            section = match.group(1).strip()
+            if section == section_name and section_start is None:
+                section_start = index
+            continue
+        if section != section_name:
+            continue
+        key = re.match(r"^\s*([A-Za-z0-9_-]+)\s*=", line)
+        if key and key.group(1) in values:
+            name = key.group(1)
+            lines[index] = f"{name} = {values[name]}\n"
+            found.add(name)
+    missing = [(key, value) for key, value in values.items() if key not in found]
+    if section_start is None:
+        lines[0:0] = [f"[{section_name}]\n",
+                      *(f"{key} = {value}\n" for key, value in missing), "\n"]
+    else:
+        lines[section_start + 1:section_start + 1] = [
+            f"{key} = {value}\n" for key, value in missing]
+    path.write_text("".join(lines), encoding="utf-8")
+
+
 def save_account(config_path: Path, credentials_path: Path,
                  username: str, password: str) -> None:
     username = username.strip()
     if not username or not password:
         raise ValueError("账号和密码不能为空")
-
-    config_path.parent.mkdir(parents=True, exist_ok=True)
-    lines = (config_path.read_text(encoding="utf-8")
-             if config_path.is_file() else "").splitlines(keepends=True)
-    section = None
-    account_start = account_end = None
-    username_index = None
-    for index, line in enumerate(lines):
-        match = re.match(r"^\s*\[([^]]+)\]", line)
-        if match:
-            if section == "account" and account_end is None:
-                account_end = index
-            section = match.group(1).strip()
-            if section == "account":
-                account_start = index
-        elif section == "account" and re.match(r"^\s*username\s*=", line):
-            username_index = index
-    if section == "account" and account_start is not None:
-        account_end = len(lines)
-
-    entry = f"username = {_toml_string(username)}\n"
-    if username_index is not None:
-        lines[username_index] = entry
-    elif account_start is not None and account_end is not None:
-        lines.insert(account_start + 1, entry)
-    else:
-        lines[0:0] = ["[account]\n", entry, "\n"]
-    config_path.write_text("".join(lines), encoding="utf-8")
+    _update_toml_section(config_path, "account", {"username": _toml_string(username)})
     credentials_path.parent.mkdir(parents=True, exist_ok=True)
     credentials_path.write_text(
         f"password = {_toml_string(password)}\n", encoding="utf-8")
+    if os.name != "nt":
+        credentials_path.chmod(0o600)
+
+
+def save_network_settings(config_path: Path, bypass_vpn: bool,
+                          direct_source_ip: str = "") -> None:
+    source_ip = direct_source_ip.strip()
+    if source_ip:
+        try:
+            address = ipaddress.IPv4Address(source_ip)
+        except ipaddress.AddressValueError as exc:
+            raise ValueError("物理网卡地址必须是有效的 IPv4 地址") from exc
+        if address.is_unspecified or address.is_loopback or address.is_link_local or address.is_multicast:
+            raise ValueError("物理网卡地址不能是回环、链路本地或组播地址")
+    _update_toml_section(config_path, "advanced", {
+        "bypass_vpn": "true" if bypass_vpn else "false",
+        "direct_source_ip": _toml_string(source_ip),
+    })

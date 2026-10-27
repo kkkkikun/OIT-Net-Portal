@@ -36,3 +36,5 @@ keepalive_interval_sec = 180
 user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 timeout_sec = 8
 eportal_host = "172.16.11.54"    # 锐捷 ePortal 服务器
+bypass_vpn = true                # VPN 开启时，认证请求仍从物理校园网网卡发出
+direct_source_ip = ""           # 物理网卡 IPv4；空 = 自动识别，识别失败时手动填写

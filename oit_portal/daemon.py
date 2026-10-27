@@ -18,6 +18,7 @@ from .auth.flow import AuthFlow, FlowOutcome
 from .config import Config
 from .keepalive import KeepalivePolicy
 from .log import get_logger
+from .network import create_session
 from .paths import AppPaths, is_termux
 from .probe import ProbeStatus
 
@@ -229,9 +230,7 @@ def run_daemon(cfg: Config, paths: AppPaths, *,
             pass
 
     try:
-        session = requests.Session()
-        session.headers["User-Agent"] = cfg.advanced.user_agent
-        session.trust_env = False  # 探测/认证直连，不走系统代理
+        session = create_session(cfg)
         from .auth import session_store
         session_store.load(session, paths.session)
 

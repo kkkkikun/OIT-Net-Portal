@@ -30,6 +30,20 @@ powershell -ExecutionPolicy Bypass -File scripts\install_windows_tray.ps1
 - **打开日志文件夹**：定位连接失败、验证码或协议变化问题。
 - **退出**：停止托盘和后台任务。
 
+### VPN 开启时登录校园网
+
+在“账号设置”中勾选 **VPN 开启时仍使用校园网直连**。校园网探测、SSO 和 ePortal 请求会绑定到物理 Wi‑Fi/有线网卡，不经过系统 VPN 路由；其他应用和 VPN 连接本身不受影响，也不需要管理员权限。
+
+通常将“物理网卡 IPv4”留空即可自动识别。无法连接时运行 `ipconfig`，找到连接校园 Wi‑Fi 的适配器（不是 VPN/TAP/TUN/Clash），把它的 IPv4 填入后保存。也可直接编辑 `%APPDATA%\oit-portal\config.toml`：
+
+```toml
+[advanced]
+bypass_vpn = true
+direct_source_ip = ""  # 例如 "172.18.10.25"；空 = 自动识别
+```
+
+DHCP 更换地址或切换网卡后请重启托盘 App。VPN 若启用 kill switch、强制全隧道/禁止局域网，或学校网络另有访问限制，仍可能无法直连；此时需在 VPN 客户端允许校园网分流，工具不会关闭或修改 VPN。
+
 ### 独立 exe 构建
 
 在 Windows 原生环境执行：

@@ -108,6 +108,20 @@ def test_save_account_restarts_with_new_config(cfg, tmp_path):
     assert controller.cfg.password == "new-password"
 
 
+def test_save_account_applies_vpn_settings(cfg, tmp_path):
+    def runner(_cfg, _paths, *, stop_event, **_kwargs):
+        stop_event.wait(1)
+
+    controller = TrayController(cfg, make_paths(tmp_path), runner=runner)
+    controller.save_account(
+        "vpn-user", "vpn-password", bypass_vpn=True,
+        direct_source_ip="172.18.1.20",
+    )
+    assert controller.cfg.advanced.bypass_vpn is True
+    assert controller.cfg.advanced.direct_source_ip == "172.18.1.20"
+    assert controller.stop()
+
+
 def test_windows_startup_command_quotes_executable():
     command = startup_command(r"C:\Program Files\OIT\OIT-Portal.exe")
     assert command == r'"C:\Program Files\OIT\OIT-Portal.exe"'

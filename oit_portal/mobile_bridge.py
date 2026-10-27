@@ -14,6 +14,7 @@ from .auth.flow import AuthFlow, FlowOutcome
 from .config import Config
 from .log import get_logger
 from .mobile_sso import MobileSsoAdapter
+from .network import create_session
 from .probe import ProbeStatus, probe as probe_network
 
 logger = get_logger()
@@ -48,11 +49,8 @@ class MobileProbeBridge:
     def __init__(self, cfg: Config, session: requests.Session | None = None):
         self._cfg = cfg
         self._owns_session = session is None
-        self._session = requests.Session() if session is None else session
+        self._session = create_session(cfg) if session is None else session
         self._closed = False
-        if self._owns_session:
-            self._session.headers["User-Agent"] = cfg.advanced.user_agent
-            self._session.trust_env = False
 
     def probe(self) -> dict[str, str]:
         """执行一次探测。返回值永不包含 URL、页面内容、凭据或原始异常。"""

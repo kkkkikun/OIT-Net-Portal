@@ -32,6 +32,7 @@ from .auth.sso import _rsa_encrypt
 from .config import Config
 from .discover import cookie_names, follow_entry
 from .log import get_logger
+from .network import create_session
 from .paths import AppPaths
 from .probe import ProbeStatus, probe
 
@@ -78,11 +79,7 @@ def _crypto_available() -> bool:
 
 
 def _make_session(cfg: Config) -> requests.Session:
-    session = requests.Session()
-    session.headers["User-Agent"] = cfg.advanced.user_agent
-    # 探测与认证必须直连：系统代理会劫持 captive 检测与登录跳转链
-    session.trust_env = False
-    return session
+    return create_session(cfg)
 
 
 def _walk(session: requests.Session, url: str, cfg: Config,

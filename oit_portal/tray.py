@@ -8,7 +8,7 @@ import threading
 from dataclasses import dataclass
 from typing import Callable
 
-from .config import Config, load_config, save_account
+from .config import Config, load_config, save_account, save_network_settings
 from .daemon import DaemonEvent, run_daemon
 from .log import get_logger, setup_logging
 from .paths import AppPaths, resolve_paths
@@ -136,8 +136,13 @@ class TrayController:
         else:
             self.start()
 
-    def save_account(self, username: str, password: str) -> None:
+    def save_account(self, username: str, password: str, *,
+                     bypass_vpn: bool | None = None,
+                     direct_source_ip: str | None = None) -> None:
         save_account(self.paths.config, self.paths.credentials, username, password)
+        if bypass_vpn is not None:
+            save_network_settings(self.paths.config, bypass_vpn,
+                                  direct_source_ip or "")
         cfg = load_config(self.paths.config, self.paths.credentials)
         if not self.stop():
             raise RuntimeError("新设置已保存，但旧后台任务尚未停止")
@@ -277,11 +282,23 @@ class TrayApplication:
         password = tk.Entry(frame, width=30, show="●")
         password.grid(row=1, column=1, pady=5)
         tk.Label(frame, text="密码仅保存在本机独立的凭据文件中",
-                 fg="#64748b").grid(row=2, column=0, columnspan=2, pady=(2, 12))
+                 fg="#64748b").grid(row=2, column=0, columnspan=2, pady=(2, 8))
+        bypass_vpn = tk.BooleanVar(value=self.controller.cfg.advanced.bypass_vpn)
+        tk.Checkbutton(frame, text="VPN 开启时仍使用校园网直连",
+                       variable=bypass_vpn).grid(row=3, column=0, columnspan=2, sticky="w")
+        tk.Label(frame, text="物理网卡 IPv4").grid(row=4, column=0, sticky="w", pady=5)
+        source_ip = tk.Entry(frame, width=30)
+        source_ip.grid(row=4, column=1, pady=5)
+        source_ip.insert(0, self.controller.cfg.advanced.direct_source_ip)
+        tk.Label(frame, text="留空自动识别；无法连接时可填 Wi-Fi 网卡地址",
+                 fg="#64748b").grid(row=5, column=0, columnspan=2, pady=(0, 12))
 
         def save() -> None:
             try:
-                self.controller.save_account(username.get(), password.get())
+                self.controller.save_account(
+                    username.get(), password.get() or self.controller.cfg.password or "",
+                    bypass_vpn=bypass_vpn.get(), direct_source_ip=source_ip.get(),
+                )
             except (ValueError, OSError, RuntimeError) as exc:
                 messagebox.showerror("无法保存设置", str(exc), parent=window)
                 return
@@ -290,7 +307,7 @@ class TrayApplication:
             window.withdraw()
 
         tk.Button(frame, text="保存并连接", command=save,
-                  width=14).grid(row=3, column=0, columnspan=2)
+                  width=14).grid(row=6, column=0, columnspan=2)
         window.bind("<Return>", lambda _event: save())
         username.focus_set()
         window.deiconify()
