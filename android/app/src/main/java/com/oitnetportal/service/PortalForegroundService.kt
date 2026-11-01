@@ -22,6 +22,7 @@ import com.oitnetportal.core.BackgroundReconnectController
 import com.oitnetportal.core.BackgroundReconnectAttemptTracker
 import com.oitnetportal.core.BackgroundReconnectStateStore
 import com.oitnetportal.core.BackgroundReconnectStatus
+import com.oitnetportal.core.BackgroundServiceRuntime
 import com.oitnetportal.core.ChaquopyPortalCoreBridge
 import com.oitnetportal.core.PersistentBackgroundReconnectStateStore
 import kotlinx.coroutines.CancellationException
@@ -46,6 +47,8 @@ class PortalForegroundService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        android.util.Log.i(TAG, "服务创建")
+        BackgroundServiceRuntime.markRunning()
         stateStore = PersistentBackgroundReconnectStateStore.get(this)
         createNotificationChannel()
         registerNetworkCallback()
@@ -54,6 +57,7 @@ class PortalForegroundService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         latestStartId = startId
+        android.util.Log.i(TAG, "收到命令 action=${intent?.action} enabled=${stateStore.enabled}")
         when (intent?.action) {
             ACTION_STOP -> {
                 stateStore.enabled = false
@@ -83,6 +87,8 @@ class PortalForegroundService : Service() {
     }
 
     override fun onDestroy() {
+        android.util.Log.i(TAG, "服务销毁")
+        BackgroundServiceRuntime.markStopped()
         unregisterNetworkCallback()
         commands.trySend(ServiceCommand.Destroy)
         super.onDestroy()
@@ -137,6 +143,7 @@ class PortalForegroundService : Service() {
                 clock = { SystemClock.elapsedRealtime() },
                 attemptTracker = BackgroundReconnectAttemptTracker.shared,
                 onState = { status, detail ->
+                    android.util.Log.i(TAG, "状态变化=$status $detail")
                     stateStore.update(status, detail)
                     updateOngoingNotification()
                 },
@@ -277,6 +284,7 @@ class PortalForegroundService : Service() {
     }
 
     companion object {
+        private const val TAG = "OitPortalService"
         const val ACTION_START = "com.oitnetportal.action.START_DAEMON"
         const val ACTION_STOP = "com.oitnetportal.action.STOP_DAEMON"
         const val ACTION_ACCOUNTS_CHANGED = "com.oitnetportal.action.ACCOUNTS_CHANGED"

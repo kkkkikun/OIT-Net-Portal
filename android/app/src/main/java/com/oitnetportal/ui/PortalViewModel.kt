@@ -10,10 +10,12 @@ import com.oitnetportal.core.BackgroundAccountSelector
 import com.oitnetportal.core.BackgroundReconnectLauncher
 import com.oitnetportal.core.BackgroundReconnectStateStore
 import com.oitnetportal.core.BackgroundReconnectStatus
+import com.oitnetportal.core.BackgroundServiceRuntime
 import com.oitnetportal.core.ChaquopyPortalCoreBridge
 import com.oitnetportal.core.CoreUnavailableException
 import com.oitnetportal.core.LoginOutcome
 import com.oitnetportal.core.LoginResult
+import com.oitnetportal.core.NotificationStatusProvider
 import com.oitnetportal.core.PortalCoreBridge
 import com.oitnetportal.core.PortalStatus
 import com.oitnetportal.core.ProbeResult
@@ -67,6 +69,8 @@ data class PortalUiState(
     val prefill: PrefillCredentials? = null,
     /** 是否具备读取 Wi-Fi 名称的授权（决定能否按 SSID 自动预选账号）。 */
     val wifiAutoMatchAvailable: Boolean = false,
+    /** 系统是否允许本应用发通知；厂商 ROM 默认禁用时后台提醒会静默失效。 */
+    val notificationsEnabled: Boolean = true,
 )
 
 class PortalViewModel(
@@ -77,6 +81,7 @@ class PortalViewModel(
     private val wifiIdentity: WifiIdentityProvider? = null,
     private val backgroundStateStore: BackgroundReconnectStateStore? = null,
     private val backgroundLauncher: BackgroundReconnectLauncher? = null,
+    private val notificationStatusProvider: NotificationStatusProvider? = null,
 ) : ViewModel() {
     private var core: PortalCoreBridge = initialCore
     private val operationMutex = Mutex()
@@ -107,6 +112,29 @@ class PortalViewModel(
                 }
             }
         }
+        restoreBackgroundReconnectIfNeeded()
+        recordEvent(
+            if (_uiState.value.notificationsEnabled) "系统通知已开启"
+            else "系统通知被关闭，后台提醒不会显示"
+        )
+    }
+
+    /**
+     * 进程被杀后重开 App：持久化的 enabled=true 只说明用户开过这个功能，
+     * 不代表后台服务还在跑——厂商划卡会直接杀进程，START_STICKY 也不会被系统重启，
+     * 状态文本还会留着上一次的旧值，界面因此显示「后台巡检中」而实际无服务。
+     *
+     * 进程内运行时标记缺失即说明服务已停，此时按用户原有意图重新拉起，
+     * 并同步纠正陈旧状态文本；服务确实在跑时不做任何事。
+     */
+    private fun restoreBackgroundReconnectIfNeeded() {
+        val store = backgroundStateStore ?: return
+        val launcher = backgroundLauncher ?: return
+        if (!store.snapshots.value.enabled) return
+        if (BackgroundServiceRuntime.isRunning()) return
+        store.update(BackgroundReconnectStatus.STARTING, "后台服务已停止，正在重新启动")
+        launcher.start()
+        recordEvent("检测到后台服务已停止，已按原设置重新启动")
     }
 
     private fun initialUiState(initialCore: PortalCoreBridge): PortalUiState {
@@ -127,6 +155,7 @@ class PortalViewModel(
             savedAccounts = accounts.map { it.toInfo() },
             prefill = choosePrefill(accounts),
             wifiAutoMatchAvailable = wifiIdentity?.canReadSsid() ?: false,
+            notificationsEnabled = notificationStatusProvider?.areNotificationsEnabled() ?: true,
         )
     }
 
@@ -446,9 +475,23 @@ class PortalViewModel(
 
     /** 回到前台：单次状态探测；本地会话已结束或用户关闭时静默跳过。 */
     fun onAppForeground() {
+        refreshNotificationStatus()
         if (disposed || !_uiState.value.coreAvailable) return
         if (!_uiState.value.autoRefreshOnForeground) return
         refresh()
+    }
+
+    /**
+     * 重新读取系统通知开关：用户在系统设置里改过通知权限后回到应用，
+     * 界面要能立刻反映出来，而不是一直挂着旧的"已开启"结论。
+     */
+    fun refreshNotificationStatus() {
+        if (disposed) return
+        val provider = notificationStatusProvider ?: return
+        val enabled = provider.areNotificationsEnabled()
+        if (_uiState.value.notificationsEnabled == enabled) return
+        _uiState.update { it.copy(notificationsEnabled = enabled) }
+        recordEvent(if (enabled) "系统通知已开启" else "系统通知被关闭，后台提醒不会显示")
     }
 
     fun setAutoRefreshOnNetworkRecovery(enabled: Boolean) {
@@ -576,11 +619,12 @@ class PortalViewModel(
             wifiIdentity: WifiIdentityProvider? = null,
             backgroundStateStore: BackgroundReconnectStateStore? = null,
             backgroundLauncher: BackgroundReconnectLauncher? = null,
+            notificationStatusProvider: NotificationStatusProvider? = null,
         ) = viewModelFactory {
             initializer {
                 PortalViewModel(
                     core, bridgeFactory, accountStore, settingsStore, wifiIdentity,
-                    backgroundStateStore, backgroundLauncher,
+                    backgroundStateStore, backgroundLauncher, notificationStatusProvider,
                 )
             }
         }

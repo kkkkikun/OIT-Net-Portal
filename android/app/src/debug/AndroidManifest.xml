@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  仅 debug 变体：黑洞 VPN 测试工具。
+  release 变体不包含这些组件，APK 里不会出现任何调试入口。
+
+  BlackholeVpnService 声明 foregroundServiceType 只是为了满足 lint 的 ForegroundServiceType 检查
+  （该检查会扫描清单里的全部 <service>）。VpnService 走的是系统的 VPN 通道，从不调用
+  startForeground，这个属性在运行时是惰性的，不影响 VPN 建立。
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <service
+            android:name=".debug.BlackholeVpnService"
+            android:exported="true"
+            android:foregroundServiceType="specialUse"
+            android:permission="android.permission.BIND_VPN_SERVICE">
+            <intent-filter>
+                <action android:name="android.net.VpnService" />
+            </intent-filter>
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Debug-only blackhole VPN used to verify campus-network authentication under an active VPN." />
+        </service>
+
+        <receiver
+            android:name=".debug.DebugVpnControlReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.oitnetportal.debug.action.START_BLACKHOLE_VPN" />
+                <action android:name="com.oitnetportal.debug.action.STOP_BLACKHOLE_VPN" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>

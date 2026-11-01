@@ -1,8 +1,10 @@
 package com.oitnetportal.ui
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -68,6 +70,19 @@ fun PortalApp(viewModel: PortalViewModel) {
             onRequestWifiPermission = {
                 wifiPermissionLauncher.launch(AndroidWifiIdentityProvider.requiredPermission())
             },
+            onOpenNotificationSettings = {
+                val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                    .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                try {
+                    context.startActivity(intent)
+                } catch (_: android.content.ActivityNotFoundException) {
+                    // 个别 ROM 缺少该入口；提示用户手动到系统设置里找通知管理。
+                    context.startActivity(
+                        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                            .setData(android.net.Uri.fromParts("package", context.packageName, null)),
+                    )
+                }
+            },
         )
     }
 }
@@ -86,6 +101,7 @@ fun PortalScreen(
     onDeleteAccount: (String) -> Unit = {},
     onUpdateAccountMeta: (String, String, String) -> Unit = { _, _, _ -> },
     onRequestWifiPermission: () -> Unit = {},
+    onOpenNotificationSettings: () -> Unit = {},
 ) {
     var showAccountManager by remember { mutableStateOf(false) }
     var selectedTab by remember { mutableIntStateOf(0) }
@@ -123,6 +139,7 @@ fun PortalScreen(
                 state, Modifier.padding(padding), onToggleNetworkRecovery,
                 onToggleForegroundRefresh, onToggleBackgroundReconnect,
                 { showAccountManager = true }, onEndSession,
+                onOpenNotificationSettings,
             )
             PortalTab.DIAGNOSTICS -> DiagnosticsPage(state, Modifier.padding(padding))
         }
@@ -215,6 +232,7 @@ private fun SettingsPage(
     onToggleBackgroundReconnect: (Boolean) -> Unit,
     onManageAccounts: () -> Unit,
     onEndSession: () -> Unit,
+    onOpenNotificationSettings: () -> Unit,
 ) {
     Column(
         modifier.fillMaxSize().verticalScroll(rememberScrollState())
@@ -227,7 +245,7 @@ private fun SettingsPage(
             Text("这些选项只会刷新连接状态，不会在后台自动提交账号密码。",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        Card {
+        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
             Column {
                 SettingSwitchRow("网络恢复时自动刷新", "Wi-Fi 恢复并通过系统验证后检查连接状态。",
                     state.autoRefreshOnNetworkRecovery, onToggleNetworkRecovery)
@@ -241,7 +259,7 @@ private fun SettingsPage(
             Text("已保存账号仅在本机加密保存；密码不会展示在账号列表中。",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        Card {
+        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
@@ -284,6 +302,31 @@ private fun SettingsPage(
                 ) { Text("协议 Capture（待接入）") }
             }
         }
+        if (state.backgroundAutoReconnectEnabled && !state.notificationsEnabled) {
+            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
+                Column(
+                    Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Text(
+                        "系统通知已被关闭",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                    )
+                    Text(
+                        "后台自动重连仍在运行，但常驻通知与登录失败提醒不会显示。" +
+                            "部分厂商系统默认禁用应用通知，需要手动允许。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                    )
+                    OutlinedButton(
+                        onClick = onOpenNotificationSettings,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("打开通知设置") }
+                }
+            }
+        }
     }
 }
 
@@ -295,7 +338,7 @@ private fun DiagnosticsPage(state: PortalUiState, modifier: Modifier = Modifier)
         verticalArrangement = Arrangement.spacedBy(18.dp),
     ) {
         PageHeading("CONNECTION LOG", "诊断", "帮助你理解最近的连接变化。")
-        Card {
+        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("当前状态", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -318,7 +361,7 @@ private fun DiagnosticsPage(state: PortalUiState, modifier: Modifier = Modifier)
                 }
             }
         }
-        Card {
+        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {

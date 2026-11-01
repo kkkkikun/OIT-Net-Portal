@@ -5,10 +5,12 @@ import com.oitnetportal.core.BackgroundReconnectLauncher
 import com.oitnetportal.core.BackgroundReconnectSnapshot
 import com.oitnetportal.core.BackgroundReconnectStateStore
 import com.oitnetportal.core.BackgroundReconnectStatus
+import com.oitnetportal.core.BackgroundServiceRuntime
 import com.oitnetportal.core.CaptureEngine
 import com.oitnetportal.core.DaemonEngine
 import com.oitnetportal.core.LoginOutcome
 import com.oitnetportal.core.LoginResult
+import com.oitnetportal.core.NotificationStatusProvider
 import com.oitnetportal.core.PortalCoreBridge
 import com.oitnetportal.core.PortalStatus
 import com.oitnetportal.core.ProbeResult
@@ -127,8 +129,14 @@ private class FakeBackgroundStateStore : BackgroundReconnectStateStore {
     }
 }
 
-private class FakeBackgroundLauncher : BackgroundReconnectLauncher {
-    var startCount = 0
+/** 可控的假通知开关来源：模拟厂商 ROM 禁用应用通知。 */
+private class FakeNotificationStatusProvider(
+    var enabled: Boolean = true,
+) : NotificationStatusProvider {
+    override fun areNotificationsEnabled(): Boolean = enabled
+}
+
+private class FakeBackgroundLauncher : BackgroundReconnectLauncher {    var startCount = 0
     var stopCount = 0
     var accountsChangedCount = 0
     var attentionCount = 0
@@ -155,6 +163,7 @@ class PortalViewModelTest {
     @After
     fun tearDown() {
         Dispatchers.resetMain()
+        BackgroundServiceRuntime.markStopped()
     }
 
     /** Main 调度器必须共享 runTest 的 scheduler，否则 delay() 无法被 advanceUntilIdle 推进。 */
@@ -169,6 +178,7 @@ class PortalViewModelTest {
         wifiIdentity: WifiIdentityProvider? = null,
         backgroundStateStore: BackgroundReconnectStateStore? = null,
         backgroundLauncher: BackgroundReconnectLauncher? = null,
+        notificationStatusProvider: NotificationStatusProvider? = null,
     ) = PortalViewModel(
         core,
         bridgeFactory = null,
@@ -177,6 +187,7 @@ class PortalViewModelTest {
         wifiIdentity = wifiIdentity,
         backgroundStateStore = backgroundStateStore,
         backgroundLauncher = backgroundLauncher,
+        notificationStatusProvider = notificationStatusProvider,
     )
 
     /** 等待 Dispatchers.IO 上的真实线程工作落地（runTest 虚拟时钟不会等真实线程）。 */
@@ -793,5 +804,91 @@ class PortalViewModelTest {
         val events = vm.uiState.value.events
         assertTrue(events.size <= 50)
         assertTrue(events.none { it.contains("secret") || it.contains("2024001") })
+    }
+
+    // ── 进程被杀后重开 App 的后台服务恢复（P1 回归）───────────
+
+    @Test
+    fun `background service is restarted when it died with the process`() = runTest {
+        installMain()
+        val stateStore = FakeBackgroundStateStore()
+        stateStore.enabled = true
+        stateStore.update(BackgroundReconnectStatus.MONITORING, "网络在线，后台巡检中")
+        val launcher = FakeBackgroundLauncher()
+        BackgroundServiceRuntime.markStopped()
+
+        val vm = viewModel(
+            FakeCoreBridge(),
+            backgroundStateStore = stateStore,
+            backgroundLauncher = launcher,
+        )
+        advanceUntilIdle()
+
+        assertEquals(1, launcher.startCount)
+        // 陈旧的「巡检中」文本必须被纠正，不能继续显示服务在跑的假象。
+        assertEquals(BackgroundReconnectStatus.STARTING, vm.uiState.value.backgroundReconnectStatus)
+        assertEquals("后台服务已停止，正在重新启动", vm.uiState.value.backgroundReconnectDetail)
+    }
+
+    @Test
+    fun `background service is not restarted when it was never enabled`() = runTest {
+        installMain()
+        val stateStore = FakeBackgroundStateStore()
+        val launcher = FakeBackgroundLauncher()
+        BackgroundServiceRuntime.markStopped()
+
+        viewModel(
+            FakeCoreBridge(),
+            backgroundStateStore = stateStore,
+            backgroundLauncher = launcher,
+        )
+        advanceUntilIdle()
+
+        assertEquals(0, launcher.startCount)
+    }
+
+    @Test
+    fun `background service is not restarted while it is still running`() = runTest {
+        installMain()
+        val stateStore = FakeBackgroundStateStore()
+        stateStore.enabled = true
+        val launcher = FakeBackgroundLauncher()
+        BackgroundServiceRuntime.markRunning()
+
+        viewModel(
+            FakeCoreBridge(),
+            backgroundStateStore = stateStore,
+            backgroundLauncher = launcher,
+        )
+        advanceUntilIdle()
+
+        assertEquals(0, launcher.startCount)
+    }
+
+    // ── 通知开关可见性（P2 回归）───────────────────────────
+
+    @Test
+    fun `disabled system notifications are reported and refreshed after user grants them`() = runTest {
+        installMain()
+        val provider = FakeNotificationStatusProvider(enabled = false)
+        val vm = viewModel(FakeCoreBridge(), notificationStatusProvider = provider)
+        advanceUntilIdle()
+
+        assertEquals(false, vm.uiState.value.notificationsEnabled)
+
+        provider.enabled = true
+        vm.refreshNotificationStatus()
+        advanceUntilIdle()
+
+        assertEquals(true, vm.uiState.value.notificationsEnabled)
+        assertTrue(vm.uiState.value.events.any { it.contains("系统通知") })
+    }
+
+    @Test
+    fun `notification status defaults to enabled when provider is absent`() = runTest {
+        installMain()
+        val vm = viewModel(FakeCoreBridge())
+
+        assertEquals(true, vm.uiState.value.notificationsEnabled)
     }
 }

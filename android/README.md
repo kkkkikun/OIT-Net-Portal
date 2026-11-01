@@ -33,6 +33,7 @@
 ## 明确未接通（有意延后）
 
 - Capture：本校协议已实测确认，移动端首装可无 `protocol.json` fail-closed 登录，非必需；待协议变动或换校适配时再接入。
+- 黑洞 VPN 测试工装：只在 debug 变体（`app/src/debug/`）存在，release APK 不含任何调试入口。
 
 后台自动重连代码已接通，但尚未完成真机后台生命周期验收。厂商强杀、用户强制停止后的行为以系统实际表现为准，不承诺必然恢复。
 
@@ -50,4 +51,5 @@ Chaquopy pip 支持环境变量 `PIP_INDEX_URL`、`PIP_EXTRA_INDEX_URL` 和 `PIP
 
 - 2026-10-24：pytest 264 用例全绿（无网络）+ Android `testDebugUnitTest` 48 例通过 + `assembleDebug`/`lintDebug` 通过。
 - 真机验收：第一、二轮已通过；第三轮新版 UI 的覆盖安装、三页导航、设置持久化、实际登录、Wi-Fi 断开/恢复、前台刷新和本地会话已通过 ADB 验证，视觉暂时接受，细节后续再优化。
+- 2026-10-31：P1 修复（厂商杀进程后重开 App 自动恢复后台重连服务并纠正陈旧状态）、P2 系统通知可见性检测（设置页红色警告卡 +「打开通知设置」）、Material3 `surfaceContainer*` 配色错配修复、真实 VPN 验收（debug 变体自建黑洞 VPN，门户不可达时后台巡检仍成功）。详见 `android/validation/2026-10-31-android-followup/report.md`。
 - 后台自动重连已于 2026-10-27 完成 Android 9 真机验收（见上）；Android 13+ 通知权限路径待可用设备验证。

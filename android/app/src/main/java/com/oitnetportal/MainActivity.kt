@@ -9,6 +9,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import com.oitnetportal.core.AndroidKeystoreAccountStore
+import com.oitnetportal.core.AndroidNotificationStatusProvider
 import com.oitnetportal.core.AndroidWifiIdentityProvider
 import com.oitnetportal.core.AppSettingsStore
 import com.oitnetportal.core.ChaquopyPortalCoreBridge
@@ -32,6 +33,7 @@ class MainActivity : ComponentActivity() {
             wifiIdentity = AndroidWifiIdentityProvider(appContext),
             backgroundStateStore = backgroundState,
             backgroundLauncher = BackgroundReconnectServiceController(appContext, backgroundState),
+            notificationStatusProvider = AndroidNotificationStatusProvider(appContext),
         )
     }
 

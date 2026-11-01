@@ -7,6 +7,7 @@ dist/
 
 # Android / Gradle 本机状态
 .gradle/
+.kotlin/
 local.properties
 
 # 敏感文件永不入库

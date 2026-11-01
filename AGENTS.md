@@ -17,6 +17,8 @@
 | `oit_portal/auth/eportal.py` | ePortal `login_sso.jsp` 上线检查。**协议常量在 `CAPTURED` 块** |
 | `oit_portal/auth/models.py` | `AuthError` 层级（含 `retryable`）、`PortalChallenge`、`OnlineResult` |
 | `oit_portal/auth/session_store.py` | SSO cookie 落盘免密复用（`session.json`，已 gitignore） |
+| `android/.../core/BackgroundServiceRuntime.kt` | 进程内存活标记：进程被杀后重开 App 能判断后台服务是否真的在跑 |
+| `android/.../core/NotificationStatusProvider.kt` | 系统通知可见性检测（应用开关 / 13+ 权限 / AppOps 三层） |
 | `oit_portal/protocol_overrides.py` | 把 `<配置目录>/protocol.json` 合并进 `CAPTURED` 命名空间（仅接受已有属性） |
 | `oit_portal/mobile_bridge.py` | 移动端桥接（路线B）：只暴露脱敏的探测/单次登录结果，不含 capture/daemon |
 | `oit_portal/mobile_sso.py` | 移动端首装 SSO 适配器：不读 protocol.json，仅当次页面可解析的 CryptoJS AES 表单才发加密密码，其余安全失败 |
@@ -26,7 +28,7 @@
 | `oit_portal/platform/{windows,termux}.py` | Windows HKCU 自启/Toast、Termux 平台细节（notify/wake_lock 为预留死代码；Linux 不需要 platform/linux.py） |
 | `oit_portal/paths.py` | 跨平台路径解析（APPDATA / XDG / 便携模式 / `OIT_PORTAL_HOME`） |
 | `oit_portal/log.py` | 日志：旋转文件 + 控制台；**永不记录明文密码与完整 cookie**（只用 `fingerprint()` 记 4 位） |
-| `tests/` | 294 个用例（无网络）。`FakeSession` + 多种 fixture 状态机 + Android UI/Windows 托盘/Linux 打包契约测试 |
+| `tests/` | 300 个用例（无网络）。`FakeSession` + 多种 fixture 状态机 + Android UI/Windows 托盘/Linux 打包契约测试 |
 | `scripts/install_windows_tray.ps1` | Windows 托盘普通用户安装（HKCU 自启 + 启动） |
 | `scripts/build_windows.ps1` | Windows 原生 PyInstaller 独立 exe 构建 |
 | `scripts/install_windows.ps1` | Windows CLI 备用安装（注册计划任务 + 启动） |
@@ -39,6 +41,7 @@
 | `docs/capture-guide.md` | 抓包向导使用说明（用户文档） |
 | `docs/windows-setup.md` | Windows 托盘使用、exe 构建、CLI 备用部署和验收清单 |
 | `docs/linux-setup.md` | Linux 离线包使用、原生架构构建、systemd 与故障排查 |
+| `docs/android-setup.md` | Android App 安装、账号、后台自动重连、厂商通知引导与故障排查 |
 | `android/` | 路线B Android 原生 App（Kotlin + Compose + Chaquopy）；Debug APK 已构建、第二轮真机功能验收通过，最新 UI/UX 改版待新一轮真机视觉验收，现状清单见 `android/README.md` |
 
 ## 常用命令
@@ -53,7 +56,7 @@ oit-portal once                        # 完整跑一次登录流程（退出码
 oit-portal daemon                      # 守护循环
 oit-portal stop                         # 停 daemon
 bash scripts/build_linux.sh            # 当前架构 Linux 离线安装包
-python -m pytest                       # 跑全部 294 个用例（无网络）
+python -m pytest                       # 跑全部 300 个用例（无网络）
 ```
 
 依赖：`requests`、`pycryptodome`（AES-128-CBC 复现，缺失时 `sso.py` 优雅降级）、`tomli`（仅 <3.11）。托盘可选依赖：`pystray`、`Pillow`；Tkinter 使用 Python 标准库。

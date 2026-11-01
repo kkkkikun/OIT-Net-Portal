@@ -98,7 +98,7 @@ probe.py 用 online / captive / offline 三态 + 多探测点双确认，避免�
 
 ### FakeSession 测试模式
 
-85 个用例全部无网络：FakeSession 预录响应序列 + fixture 构造状态机。写新协议分支时先构造对应 fixture 状态，再实现代码。
+294 个用例全部无网络：FakeSession 预录响应序列 + fixture 构造状态机。写新协议分支时先构造对应 fixture 状态，再实现代码。
 
 ## 文件速查
 
@@ -128,3 +128,71 @@ probe.py 用 online / captive / offline 三态 + 多探测点双确认，避免�
 **教训**：① 移动端/桌面端依赖集合不同（brotli 有无）会导致同一 AC 行为分叉；
 ② fail-closed 的静默 catch 要配可见的诊断出口（事件日志/notice），否则用户无法区分
 "登录失败没存"与"保存功能坏了"。
+
+## 踩坑：后台服务"开关是开的"不等于"服务在跑"（2026-10-31，P1）
+
+**现象**：厂商划卡杀掉进程后重开 App，界面显示"网络在线，后台巡检中"，`dumpsys` 里却是 0 ServiceRecord。
+**根因**：SharedPreferences 里的 `enabled=true` 与服务存活是两件事，进程被杀后两者脱节；
+状态文本是上一次留下的旧值，而 `PortalViewModel` 里没有任何重新拉起服务的路径。
+**修复**：新增 `BackgroundServiceRuntime` 进程内存活标记（`onCreate`→markRunning、`onDestroy`→markStopped）；
+ViewModel 初始化时若 `enabled=true` 而运行时标记缺失，就按原设置重新拉起服务并纠正陈旧状态文本。
+**教训**：① 持久化的"用户意图"和运行时的"客观事实"必须分开建模，不能用一个开关兼表两义；
+② 进程内存标记是识别"进程被杀"的廉价可靠手段——磁盘上的状态活不过进程死亡。
+
+## 踩坑：SharedPreferences 值不变时不写盘，别拿 mtime 当心跳（2026-10-31）
+
+**现象**：用 `stat -c %Y` 盯后台状态文件，mtime 长时间不动，差点误判成"巡检循环停了"。
+**根因**：`SharedPreferences.Editor.apply()` 在**值未变化时不会触发磁盘写入**，
+状态文本每轮都一样 → 文件内容不变 → mtime 不动。循环其实一直是好的。
+**教训**：判据要选"每次都变"的东西。改用 logcat 打点后真相立现：
+后台循环 60s 一轮稳定运行，日志比 mtime 可靠得多。
+
+## 踩坑：Material3 1.2+ 的 Card 默认取 surfaceContainer*（2026-10-31，界面不和谐）
+
+**现象**：自定 `lightColorScheme()` 配了 `surface`/`surfaceVariant`，卡片却渲染成 M3 基线的淡紫灰，与整体灰蓝配色打架。
+**根因**：Material3 1.2 起 Card 的默认容器色改取 `surfaceContainerLow` 一组新角色；
+自定义 `lightColorScheme()` 没给这些角色 → 回落到 M3 基线（紫调灰），而不是主题自己的 `surface`。
+**修复**：补齐 `surfaceContainerLowest/Low/High/Highest`、`surfaceBright/Dim`、`surfaceTint`，
+并在所有 Card 上显式写 `containerColor = surface`，不依赖库版本的默认角色。
+**教训**：升级 Material3 时，**新增的语义角色**不会自动跟随你自定义的配色——要么补齐，要么显式指定容器色。
+
+## 踩坑：AppOps 的 op 编号厂商不统一（2026-10-31）
+
+**现象**：`AppOpsManager.OP_POST_NOTIFICATION` 未在公开 SDK 暴露；想按编号查，
+结果 vivo 上 11 是 POST_NOTIFICATION，而 AOSP 上 26 是 CAMERA。
+**修复**：不硬编码编号，改用公开 API 按**名字**解析（`checkOpNoThrow("POST_NOTIFICATION", ...)`）；
+且 `unsafeCheckOpNoThrow` 是 API 29+、`checkOpNoThrow` 从 API 19 就有，要按版本分支。
+**教训**：隐藏的系统常量不要凭记忆硬编码；按名字让框架解析，并按 API 级别分支。
+另外实测：框架的 `areNotificationsEnabled()` 在 API 28 上**不查 AppOps**，
+检测"用户关掉了应用通知"要靠它，AppOps 那层只作为其他 ROM 的保守兜底。
+
+## 踩坑：改 TrueType 字形后必须同步 hmtx 的 lsb（2026-11-01，字体工具）
+
+**现象**：用 fontTools 替换 `uni3010`/`uni3011` 的轮廓后，fontTools 自己读回来是对的，
+但 `hmtx` 里仍是旧 lsb（790 vs 新的 xMin 1499），差 709 单位 ≈ 0.35em。
+**根因**：TrueType 的字形原点由 **hmtx 的 lsb** 决定（FreeType / Minikin 按它定位），
+轮廓坐标本身不决定位置；只换 glyf 不换 hmtx 就会整体平移。
+**修复**：写回轮廓后立刻 `hmtx[name] = (advance, min(x))`，并把「lsb == xMin」作为工具的自检项。
+**教训**：**改 glyf ≠ 改完字体**；凡是动过轮廓的工具，必须同时校验 hmtx / head / maxp 的一致性。
+
+## 踩坑：Chromium(WebView) 里「墨迹尺寸」和「步进」会被 size-adjust 拆开（2026-11-01）
+
+**现象**：WebView 里正文 em=97px（按 ink 宽高比反推，与 PIL 渲染逐像素吻合），
+但字间步进只有 92px，而非字体 hmtx 的 1.0742em ≈ 104px；回退字体更是被缩到 92px。
+**根因**：Chromium 对 fallback 字体做 size-adjust（按 ascent/descent 对齐主字体），
+**墨迹按 nominal size 绘制，步进按调整后的尺寸计算**，两者不再是同一个比例。
+**修复**：不要用「advance / em」反推字号，改用「ink 宽高 ÷ 字体的 ink 设计比例」；
+排版类问题一律以**真机截图量像素**为准。
+**教训**：**WebView 不是 Android 原生文本栈**；同一段文字在 TextView 与 WebView 里的
+字号/基线/回退行为可以完全不同，诊断必须先确认渲染引擎。
+
+## 踩坑：诊断「某个 App 显示异常」先做 STOCK 对照（2026-11-01）
+
+**现象**：阅读页 `【】` 左右不对称，怀疑是系统字体被换成黑板报体导致。
+**根因**：切到 `stock`（系统字体 100% 原厂 MiSans，一行字体代码都没跑）截图，
+**同样的不对称依然存在**（`【`→正文 59px vs 正文→`】` 12px），
+而黑板报体下是 71px vs 12px，差值恰好等于两种字体空格步进之差（0.11em ≈ 12px）。
+⇒ 根因是**原文里 `【` 后带了一个空格**，由正文字体渲染，与字体本身无关。
+**修复**：App 侧用 CSS `text-spacing-trim: trim-both` 或文本清洗去掉全角标点内侧空白。
+**教训**：**先建立「什么都不改」的基线，再谈修**；没有 STOCK 对照，很容易把
+App/引擎的行为误判成字体问题，然后在字体上做无效改动。
