@@ -332,6 +332,24 @@ class TrayApplication:
         return 0
 
 
+def _dependency_error_message(exc: ImportError) -> str:
+    """托盘启动失败的依赖提示。
+
+    tkinter 是特例：它**不是 pip 包**，而是随 Python 安装程序一起装的
+    （tcl/tk and IDLE 可选功能）。缺它时让用户去 pip install 只会白跑一趟
+    （2026-11-01 在用户自己的中文 Windows 上实测：Python 3.13 没勾 tcl/tk，
+    托盘启动即崩，而安装脚本却照旧打印「完成！」）。
+    """
+    if exc.name == "tkinter":
+        return (
+            "托盘界面缺少 tkinter，当前 Python 没有安装。\n"
+            "  tkinter 不是 pip 包，无法用 pip install 补上；请重新运行 Python 安装程序 →\n"
+            "  Modify → 勾选 tcl/tk and IDLE → 重新安装后再次执行本脚本。\n"
+            "  不想用托盘界面的话，可改用命令行：oit-portal configure（同样能设置账号密码）"
+        )
+    return f"托盘依赖未安装，请执行 pip install .[tray]：{exc}"
+
+
 def main() -> int:
     paths = resolve_paths()
     setup_logging(paths.log_file, console=False)
@@ -340,7 +358,7 @@ def main() -> int:
         app = TrayApplication(cfg, paths)
         return app.run()
     except ImportError as exc:
-        print(f"托盘依赖未安装，请执行 pip install .[tray]：{exc}", file=sys.stderr)
+        print(_dependency_error_message(exc), file=sys.stderr)
         return 3
     except (ValueError, OSError) as exc:
         print(f"无法启动托盘应用：{exc}", file=sys.stderr)

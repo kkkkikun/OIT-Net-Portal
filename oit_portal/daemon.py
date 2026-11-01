@@ -351,8 +351,12 @@ def stop_daemon(paths: AppPaths) -> int:
     try:
         pid = int(paths.pid.read_text(encoding="ascii").strip())
     except (OSError, ValueError):
-        logger.error("未发现运行中的 daemon（无 pid 文件 %s）", paths.pid)
-        return 1
+        # 没有 pid 文件 = 没有 daemon 在跑。stop 是幂等操作，按成功处理
+        # （与 systemctl stop 对未激活单元返回 0 一致）；用 INFO 级别是因为
+        # 这是正常状态，不是错误 —— 否则 Windows PowerShell 5.1 会把 stderr
+        # 当成终止错误，把安装脚本在启动托盘前就打断（2026-11-01 实测）。
+        logger.info("未发现运行中的 daemon（无 pid 文件 %s）", paths.pid)
+        return 0
     try:
         if sys.platform == "win32":
             subprocess.run(["taskkill", "/PID", str(pid)], check=False,

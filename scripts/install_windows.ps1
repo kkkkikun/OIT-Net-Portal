@@ -1,4 +1,4 @@
-# OIT 校园网自动登录 — Windows 一键安装（任务计划程序方案）
+﻿# OIT 校园网自动登录 — Windows 一键安装（任务计划程序方案）
 # 用法（管理员 PowerShell，项目目录内）：
 #   powershell -ExecutionPolicy Bypass -File scripts\install_windows.ps1
 # 可选参数：
