@@ -1,6 +1,6 @@
 # SNAPSHOT.md — 项目状态快照
 
-> 最后更新: 2026-11-01 | 验证: pytest 324 passed (无网络) + Android testDebugUnitTest 61 例 + clean assembleDebug/lintDebug + vivo V1936A 真机复现验收（2026-10-31）+ 红米 K50 Ultra / Android 15 通知权限路径验收（2026-11-01）+ Windows 端 PC 侧全链路实测（2026-11-01）
+> 最后更新: 2026-11-01 | 验证: pytest 332 passed (无网络) + Android testDebugUnitTest 61 例 + clean assembleDebug/lintDebug + vivo V1936A 真机复现验收（2026-10-31）+ 红米 K50 Ultra / Android 15 通知权限路径验收（2026-11-01）+ Windows 端 PC 侧全链路实测（2026-11-01）+ GitHub Actions 三 job 全绿（run 41307746362，2026-11-01）
 
 ## 项目概览
 
@@ -18,20 +18,21 @@
 |---|---|
 | 语言 | Python 3.9+ |
 | 依赖 | requests, pycryptodome (可选 AES), tomli (<3.11) |
-| 测试 | pytest，324 用例全部无网络（FakeSession + fixture 状态机 + Android/Windows 托盘/Windows 脚本/Linux 打包静态契约测试）；Android 另有 61 例 JUnit 单测 |
+| 测试 | pytest，332 用例全部无网络（FakeSession + fixture 状态机 + Android/Windows 托盘/Windows 脚本/Linux 打包/CI workflow 静态契约测试）；Android 另有 61 例 JUnit 单测 |
 | 打包 | pyproject.toml + setuptools，console_scripts: oit-portal；Linux 离线包 `scripts/build_linux.sh`（wheelhouse tar.gz + SHA256）；Windows PyInstaller exe |
 | 格式化 | 无强制工具，遵循现有代码风格 |
 
 ## Git 状态
 
-- 分支: android-app（工作区干净，VPN 分流 / configure / Linux 离线包 / Windows 脚本修复已提交）
+- 分支: `main`（= `android-app`，两条分支同步；`legacy-shell-cli` 停在 `ffa69aa`）
+- 远端: `kkkkikun/OIT-Net-Portal`（**公开仓库**）；标签 `v1.0.0` → `b07a9f8`（annotated）
 - 最近提交:
-  - `fa2fc10` fix(windows): .ps1 改 UTF-8 with BOM + 托盘安装 4 步校验 + stop 幂等 + 卸载核实
-  - `e242bd9` docs(windows): 记录 PS 5.1 的 5 个新坑 + 部署说明补齐
-  - `f147f24` chore(validation): 遮盖验收截图里的学号 + 补录最近任务与阅读页证据
-  - `148b59b` docs(tasks): 协议 C4.6 App 侧注销按用户确认标记为暂不做
-  - `210a5e4` docs(tasks): 销掉陈旧待办，重分类为待决策/阻塞/已知边界
-  - `dc3c3e6` docs: 同步 VPN 分流 / configure / Linux 离线包说明与 294 用例基线
+  - `b07a9f8` fix(ci): Android job 装 Python 3.10（Chaquopy 要求构建机与 App 同版本）+ CI workflow 契约测试
+  - `fc4058c` ci: 修首轮 CI 的三个真问题 + 发版 workflow 的两个隐患
+  - `b304aab` fix(build): 构建脚本先停托盘再装项目依赖（更正此前"不重装"的错误解法）
+  - `c63f72b` fix(log): setup_logging 幂等判断改用「自有 handler」标记
+  - `a06b8a2` chore(release): 版本号对齐 v1.0.0 + 补 CHANGELOG
+  - `442c9b9` ci: 加 GitHub Actions（CI + 发版）+ 补 Gradle wrapper + 修正过时文档
 
 ## 目录结构
 
@@ -95,6 +96,7 @@ openspec/                   # OpenSpec 规范体系（specs/ + changes/）
 - **P3/P4 已修（2026-11-01）**: ①新增 `core/NetworkValidationGate.kt`——默认网络「验证通过」只放行一次翻转，`MainActivity.onCapabilitiesChanged` 不再每几秒触发一次探测；红米真机静置 150 秒的校准事件从 25~100 条降到 **0 条**，一次 Wi-Fi 断开→重连后诊断事件总数 4 条。②`BackgroundReconnectController` 的重登路径改用区分性文案（「检测到需要校园网认证，正在自动重登」/「自动重登成功，网络在线」），普通巡检仍是「网络在线，后台巡检中」。Android 单测 53→**61 例**
 - **Windows 端 PC 侧全链路实测与修复（2026-11-01）**: 在用户自己的中文 Windows（PowerShell 5.1.26100.9711）上跑完「安装 → 托盘启动 → 独立 exe → 卸载」全链路，暴露并修掉 4 个真缺陷：①4 个 `.ps1` 是 UTF-8 无 BOM + 含中文 → PS 5.1 按 ANSI 解码吞掉引号 → **语法错误，文档推荐的托盘安装/卸载方式在中文 Windows 上完全不可用**；②`stop` 在无 daemon 时打 ERROR 到 stderr → PS 把 stderr 当终止错误 → 安装脚本在第 2 步被打断、**托盘根本没启动**；③缺 tkinter 时只提示 `pip install .[tray]`（tkinter 不是 pip 包，等于死路），且安装脚本托盘启动即崩仍照报「完成！」；④`build_windows.ps1` 重装本项目撞上被占用的入口 exe（WinError 5）、`uninstall_windows.ps1` 用 PATH 上的 `python`/`oit-portal`（venv 场景下都不存在）却照报「卸载完成」。修复后：4 个脚本 PS 解析全 OK、托盘安装 4 步带存活校验、`stop` 幂等返回 0、卸载会核实包/自启项/入口 exe/`~` 临时目录是否真清干净、独立 exe（自包含）正常弹窗。pytest 309→**324**
 - **验收截图的账号信息已遮盖并重写历史（2026-11-01）**: 本仓库是**公开仓库**（`kkkkikun/OIT-Net-Portal`，`visibility=PUBLIC`）。三个验收目录的截图里原本可见**学号**，最早的 `2026-10-27-background-reconnect` 那批还可见**真实姓名 + 工号**（教师账号）。处置分两步：①用新提交遮盖全部截图（红米 8 张 / 17 处黑块，vivo 3 张 / 6 处黑块），标签与界面结构保留；②对**唯一真正公开过未遮盖原图的** `00_screen_state.png` 用 `git filter-repo --blob-callback` 重写历史并强推 `android-app`（`40a9d72 → e484110`，所有提交 SHA 都变了）。**核验：全新克隆里该文件在所有历史提交中都只有遮盖版，旧 blob 不在对象库中**。残留边界：GitHub 自身在 GC 前仍可按旧 SHA 临时取到不可达对象
+- **v1.0.0 发布与 GitHub Actions 落地（2026-11-01）**: `android-app` 纯快进合并进 `main`（`ffa69aa..a06b8a2`），两条分支现已同步；版本号 `pyproject` → 1.0.0、Android `versionName` 1.0.0 / `versionCode` 2；新增 `CHANGELOG.md`、README 徽章（294→332）+ Gradle Wrapper 8.9 入库；`.github/workflows/ci.yml`（python / android / windows-exe 三 job）+ `release.yml`（打 v* 标签即构建 APK + exe 并挂到 Release）。**首轮 CI 全红，修了 5 个真问题**：①pytest ≥9.2 会把 `LogCaptureHandler` 挂到 `propagate=False` 的 logger 上 → `setup_logging` 的 `if logger.handlers` 幂等判据误判 → 日志文件从未创建（本地 pytest 9.0.3 无此行为，**本地绿、CI 红**）→ 改用自有 handler 标记；②`build_windows.ps1` 此前只装 pystray/pillow/pyinstaller → 托盘模块 import requests 失败 → 更正为「先停运行中的托盘再正常装 `.[tray]`」；③`android-actions/setup-android` 会去装早已下架的 `tools` 包 → 改用 runner 预装 SDK + `yes | sdkmanager --licenses`；④Chaquopy 要求构建机 Python 与 App 内嵌版本一致（3.10），CI 装的却是 runner 自带的 3.12 → Android job 补装 Python 3.10；⑤发版说明的 awk 用 `"^## \["` 正则匹配标题，实测一行都匹配不到 → 改用 `index()`。**第三轮 CI 三 job 全绿（run 41307746362）**，tag `v1.0.0` 已移到 `b07a9f8` 并触发发版
 - **已归档 change**: android-ui-refresh（2026-10-27）、android-background-auto-reconnect（2026-10-27）
 
 ## 安全红线（改代码前自查）
