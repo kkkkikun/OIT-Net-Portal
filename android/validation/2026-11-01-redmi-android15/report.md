@@ -278,3 +278,15 @@ Android testDebugUnitTest                53 例（未改动）
 | `17-end-session.png` | 结束本次会话 |
 | `18-captive-detected.png` | 结束会话后的连接页 |
 | `20-final-notification.png` | 验收结束时通知栏最终状态 |
+| `21-recents.png` | HyperOS 竖向最近任务列表：OIT 卡片被「AA 小说下载阅读器」卡片遮住一角（可见「（202…」「2024…」片段，已遮盖） |
+| `22-recents-oit.png` | HyperOS 横滑最近任务：Chrome / 番茄免费小说 / 设置 —— **OIT 卡片已被划掉**（划卡杀进程的现场） |
+| `23-recents-scan.png` | HyperOS 最近任务：设置卡片 + Shizuku 卡片（OIT 卡片已不在列表里） |
+| `24-recents-oit-front.png` | OIT Net Portal 在最近任务里的前台卡片（连接状态 CONNECTED，右侧露出阅读页边缘） |
+| `25-bracket-reading-page.png` | 「超级看书」阅读页 `【 异能】` 高清实拍（**Hanyi 新蒂黑板报体**，括号已嵌入字体本体） |
+
+> ⚠️ **隐私处理（2026-11-01）**：本仓库是**公开仓库**，截图里原本直接可见学号。
+> 现已把 `01/05/14/15/18/19/21/24` 共 8 张截图里的学号用黑块遮盖
+> （整串 13 处 + 卡片里被遮挡的片段 4 处，共 17 处）。
+> 「当前账号：学生号：」「学号或工号」等标签与界面结构完整保留，不影响证据效力。
+> **注意：git 历史里仍保留着未遮盖的原始图片** —— 彻底清除需要用 `git filter-repo` 重写历史并强推。
+
