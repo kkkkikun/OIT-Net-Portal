@@ -97,6 +97,31 @@ def test_setup_logging_idempotent(tmp_path):
     assert len(file_handlers) == 1
 
 
+def test_setup_logging_works_when_host_already_attached_handlers(tmp_path):
+    """宿主已往同一 logger 挂 handler 时，仍要正常创建日志文件。
+
+    回归：曾用 `if logger.handlers: return logger` 判断「已初始化」，
+    宿主（pytest 9 的 logging 插件会给每个 logger 挂 LogCaptureHandler、
+    嵌入式宿主、GUI 框架等）挂的 handler 会被误判成「我们初始化过了」，
+    于是日志文件根本没被创建 —— 2026-11-01 在 GitHub Actions 上首次暴露。
+    """
+    logger = logging.getLogger("oit_portal")
+    foreign = logging.NullHandler()
+    logger.addHandler(foreign)
+    try:
+        log_file = tmp_path / "subdir" / "test.log"
+        setup_logging(log_file, console=False)
+        logger.info("hello world")
+        assert log_file.exists()
+        assert "hello world" in log_file.read_text(encoding="utf-8")
+        # 宿主的 handler 仍在，且我们的文件 handler 也挂上了
+        assert foreign in logger.handlers
+        assert any("RotatingFileHandler" in type(h).__name__
+                   for h in logger.handlers)
+    finally:
+        logger.removeHandler(foreign)
+
+
 def test_fingerprint_masks_value():
     assert fingerprint("supersecret") == "supe***(11ch)"
     assert fingerprint("") == "<empty>"
