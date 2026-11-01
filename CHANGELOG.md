@@ -24,7 +24,7 @@
 
 - 托盘图标菜单：状态与详情、立即重连、暂停/启动自动登录、账号设置、开机自启开关、打开日志文件夹、退出。
 - 账号设置窗口支持 **VPN 开启时仍使用校园网直连** 与手工指定物理网卡 IPv4。
-- 一键安装脚本 `scripts\install_windows_tray.ps1`：运行环境预检 → 装依赖 → 写当前用户自启项 → 启动并**验证进程存活**。
+- 一键安装脚本 `scripts\install_windows_tray.ps1`：运行环境预检 → 装依赖 → 写当前用户自启项 → 启动并**验证进程存活**；重装时会先停掉运行中的托盘（否则入口 exe 被锁，pip 报 WinError 5），校内网拉不到 pypi 时自动改用 `--no-build-isolation` 离线安装。
 - 独立 exe 构建：`scripts\build_windows.ps1`（PyInstaller，自包含 Python，可分发给未装 Python 的机器）。
 - 卸载脚本 `scripts\uninstall_windows.ps1`：停止托盘/daemon/旧计划任务、移除自启项、卸载包并**核实是否真清干净**，
   `-Purge` 一并删除配置/凭据/日志。
@@ -60,7 +60,8 @@ Kotlin + Jetpack Compose + Chaquopy，复用同一份 Python 认证核心。
 - **发版工作流**（`.github/workflows/release.yml`）：推 `v*` 标签自动构建 APK 与 exe 并挂到 GitHub Release。
 - **.ps1 一律 UTF-8 with BOM** —— PowerShell 5.1 只对带 BOM 的文件按 UTF-8 解码，
   否则中文 Windows 上会因引号被吞而语法错误。
-- pytest **324 例**全部无网络；Android JUnit **61 例**。
+- pytest **338 例**全部无网络；Android JUnit **61 例**。
+- **版本号一致**：`oit-portal --version` 取自包元数据，与 `pyproject.toml` 同源，不会再对外报旧的 0.1.0。
 
 ### 已知边界
 
