@@ -1,0 +1,97 @@
+name: Release
+
+# 打 v* 标签即触发：构建 Android debug APK 与 Windows 独立 exe，
+# 并把它们挂到对应的 GitHub Release 上。
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "已存在的标签名，例如 v1.0.0"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  android:
+    name: 构建 debug APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v3
+      - name: 安装 Android SDK 组件
+        run: |
+          sdkmanager --install "platforms;android-35" "build-tools;35.0.0"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: 单测 + lint + 构建 APK
+        working-directory: android
+        run: ./gradlew --no-daemon testDebugUnitTest lintDebug assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+
+  windows:
+    name: 构建 Windows 独立 exe
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 检查 tkinter（托盘界面依赖）
+        run: python -c "import tkinter; print('tkinter OK')"
+      - name: 构建 exe
+        shell: powershell
+        run: ./scripts/build_windows.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OIT-Portal-windows
+          path: dist/OIT-Portal.exe
+          if-no-files-found: error
+
+  publish:
+    name: 创建 / 更新 GitHub Release
+    needs: [android, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: 组装附件
+        run: |
+          mkdir -p dist-assets
+          find artifacts -name 'app-debug.apk' -exec cp {} dist-assets/OIT-Portal-debug.apk \;
+          find artifacts -name 'OIT-Portal.exe' -exec cp {} dist-assets/OIT-Portal-windows.exe \;
+          ls -l dist-assets
+      - name: 创建 / 更新 Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          notes=$(mktemp)
+          if [ -f CHANGELOG.md ]; then
+            # 取 CHANGELOG 里对应标签的小节
+            awk -v tag="$TAG" '
+              $0 ~ "^## \\[" tag "\\]" {found=1; next}
+              found && /^## \[/ {exit}
+              found {print}
+            ' CHANGELOG.md > "$notes"
+          fi
+          if [ ! -s "$notes" ]; then
+            printf '%s\n\n%s\n' "$TAG" "见 CHANGELOG.md 与仓库文档。" > "$notes"
+          fi
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist-assets/* --clobber
+            gh release edit "$TAG" --notes-file "$notes"
+          else
+            gh release create "$TAG" dist-assets/* --title "$TAG" --notes-file "$notes"
+          fi

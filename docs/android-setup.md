@@ -121,20 +121,22 @@ App 已针对这一点做了处理：
 
 ## 6. 从源码构建（开发者）
 
-无 Gradle Wrapper，直接用本机 Gradle：
+仓库自带 Gradle Wrapper（Gradle 8.9），**无需自备 Gradle**，只要 JDK 17 与 Android SDK（compileSdk 35）：
 
 ```bash
 cd android
 printf 'sdk.dir=%s\n' "$ANDROID_HOME" > local.properties
-gradle :app:assembleDebug          # 产物：app/build/outputs/apk/debug/app-debug.apk
-gradle :app:testDebugUnitTest      # 单元测试
-gradle :app:lintDebug              # 静态检查
+./gradlew :app:assembleDebug          # 产物：app/build/outputs/apk/debug/app-debug.apk
+./gradlew :app:testDebugUnitTest      # 单元测试
+./gradlew :app:lintDebug              # 静态检查
 ```
+
+Windows 用 `gradlew.bat`。
 
 依赖已缓存且当前网络不可达时，加 `--offline` 避免直连 Maven 重试造成长时间等待：
 
 ```bash
-gradle --offline :app:assembleDebug
+./gradlew --offline :app:assembleDebug
 ```
 
 构建需要 `compileSdk 35`、`minSdk 26`、`targetSdk 35`，JDK 17+。Python 侧依赖由 Chaquopy 安装进 APK，构建时会把仓库里的 `oit_portal/` 与 `pyproject.toml` 暂存到构建目录再安装。

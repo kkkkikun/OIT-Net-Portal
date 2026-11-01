@@ -1,4 +1,4 @@
-# Android 工程（Debug APK 已构建，第二轮真机验收通过）
+# Android 工程（Debug APK 已构建，四轮真机验收通过）
 
 本目录是路线 B 的 Android 实现：Kotlin + Jetpack Compose UI，通过 Chaquopy 17.1.0 按需复用仓库根目录的 Python 核心。
 
@@ -39,10 +39,19 @@
 
 ## 构建方式
 
-无 Gradle Wrapper，使用本机 Gradle 8.9（`~/.gradle/wrapper/dists/`）+ `ANDROID_HOME=~/Android/Sdk`；
-依赖解析经 HTTP 代理时只通过命令行 `-Dhttp(s).proxyHost/-Dhttp(s).proxyPort` 传入，不写入项目配置。
+仓库自带 Gradle Wrapper（Gradle 8.9），**无需自备 Gradle**，只需要 JDK 17 与 Android SDK（compileSdk 35）：
+
+```bash
+cd android
+./gradlew :app:assembleDebug     # 产物：app/build/outputs/apk/debug/app-debug.apk
+```
+
+Windows 用 `gradlew.bat`。依赖解析经 HTTP 代理时只通过命令行 `-Dhttp(s).proxyHost/-Dhttp(s).proxyPort` 传入，不写入项目配置。
 依赖已缓存且当前网络不可达时，可在 Gradle 命令加 `--offline`，避免直连 Maven 重试造成长时间等待。
 Chaquopy pip 支持环境变量 `PIP_INDEX_URL`、`PIP_EXTRA_INDEX_URL` 和 `PIP_FIND_LINKS`，可临时指定镜像或本地 Android wheelhouse，默认索引行为不变。
+
+CI 会自动跑单测 + lint + 构建（`.github/workflows/ci.yml`），并把 debug APK 作为 artifact 上传；
+打 `v*` 标签还会自动构建并把 APK 与 Windows 独立 exe 挂到 GitHub Release 上（`.github/workflows/release.yml`）。
 
 ## 验证状态
 
@@ -52,4 +61,4 @@ Chaquopy pip 支持环境变量 `PIP_INDEX_URL`、`PIP_EXTRA_INDEX_URL` 和 `PIP
 - 2026-10-24：pytest 264 用例全绿（无网络）+ Android `testDebugUnitTest` 48 例通过 + `assembleDebug`/`lintDebug` 通过。
 - 真机验收：第一、二轮已通过；第三轮新版 UI 的覆盖安装、三页导航、设置持久化、实际登录、Wi-Fi 断开/恢复、前台刷新和本地会话已通过 ADB 验证，视觉暂时接受，细节后续再优化。
 - 2026-10-31：P1 修复（厂商杀进程后重开 App 自动恢复后台重连服务并纠正陈旧状态）、P2 系统通知可见性检测（设置页红色警告卡 +「打开通知设置」）、Material3 `surfaceContainer*` 配色错配修复、真实 VPN 验收（debug 变体自建黑洞 VPN，门户不可达时后台巡检仍成功）。详见 `android/validation/2026-10-31-android-followup/report.md`。
-- 后台自动重连已于 2026-10-27 完成 Android 9 真机验收（见上）；Android 13+ 通知权限路径待可用设备验证。
+- 后台自动重连已于 2026-10-27 完成 Android 9 真机验收（见上）；**Android 13+ 通知权限路径已于 2026-11-01 在红米 K50 Ultra / HyperOS 2 / Android 15 上验收通过**（允许 → 常驻通知真实展示；拒绝 → 服务不启动 + `enabled=false` + 提示 + 诊断事件），同时复验 P1/P2 与真实校园网登录、断网恢复巡检。报告与截图：`android/validation/2026-11-01-redmi-android15/`。

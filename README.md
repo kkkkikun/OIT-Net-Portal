@@ -52,7 +52,7 @@ python -m pytest       # 全部用例（无网络）
 | **Android Termux** | `bash scripts/install_termux.sh` | Termux:Boot + 电池豁免 | [termux-setup](docs/termux-setup.md) |
 | **Linux (systemd)** | 解压对应架构离线包后 `./install.sh`；源码用 `bash scripts/install_linux.sh` | 系统服务（开机自启 + 崩溃自愈） | [linux-setup](docs/linux-setup.md) |
 
-> 🚧 **Android 原生 App（路线B，持续完善）**：`android/` 是基于 Kotlin + Jetpack Compose + Chaquopy 的原生客户端。Debug APK 已构建，手动登录、多账号、Keystore 凭据存储、自动刷新设置与脱敏诊断已接通；连接/设置/诊断三入口 UI/UX 已重设计并通过构建。后台自动重连与 Capture 仍按计划延后，最新界面待新一轮真机视觉验收。现状与路线图见 [android/README.md](android/README.md)。
+> 📱 **Android 原生 App（路线B）**：`android/` 是基于 Kotlin + Jetpack Compose + Chaquopy 的原生客户端。手动登录、多账号、Keystore 凭据存储、自动刷新设置、脱敏诊断、**后台自动重连**（含 Android 13+ 通知权限路径）均已接通，并通过四轮真机验收 —— vivo V1936A / Android 9 与红米 K50 Ultra / HyperOS 2 / Android 15 上验证了覆盖安装、真实登录、断网恢复、进程被杀后自愈、通知权限允许与拒绝两条分支。Capture 有意不做（首装可无 `protocol.json` fail-closed 登录）。构建与现状见 [android/README.md](android/README.md)。
 
 ## 📖 命令一览
 
