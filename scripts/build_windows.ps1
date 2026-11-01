@@ -6,12 +6,17 @@ $ErrorActionPreference = "Stop"
 $root = Resolve-Path (Join-Path $PSScriptRoot "..")
 Push-Location $root
 try {
-    # 只安装构建期的第三方依赖，**不重装本项目**：
-    # 重装会重新生成 Scripts\oit-portal-tray.exe，而托盘 App 正在运行时
-    # 该 exe 被 Windows 锁住 → pip 报 [WinError 5] 拒绝访问，
-    # 构建在第一步就失败（2026-11-01 在用户自己的 Windows 上实测）。
-    # PyInstaller 通过 --paths "$root" 直接从源码树导入 oit_portal，无需安装本项目。
-    & $Python -m pip install --quiet pystray pillow pyinstaller
+    # 重装本项目会重新生成 Scripts\oit-portal-tray.exe，而托盘 App 正在运行时
+    # 该 exe 被 Windows 锁住 → pip 报 [WinError 5] 拒绝访问，构建第一步就失败
+    # （2026-11-01 在用户自己的 Windows 上实测）。根因是「托盘在跑」，不是「要重装」，
+    # 所以先把它停掉，再正常安装项目依赖（requests / pycryptodome 等托盘会间接导入的包
+    # 不能省 —— 少了 requests，生成图标的 `from oit_portal.tray import ...` 就会 ModuleNotFoundError）。
+    if (Get-Process -Name "oit-portal-tray" -ErrorAction SilentlyContinue) {
+        Write-Host "==> 停止正在运行的托盘 App（重装需要替换入口 exe）" -ForegroundColor Yellow
+        Stop-Process -Name "oit-portal-tray" -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Seconds 1
+    }
+    & $Python -m pip install --quiet ".[tray]" pyinstaller
     if ($LASTEXITCODE -ne 0) { throw "构建依赖安装失败" }
 
     # 构建产物若正在运行，同样会被锁住（PyInstaller 无法覆盖）→ 先提示退出。

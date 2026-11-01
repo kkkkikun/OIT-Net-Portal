@@ -6,6 +6,8 @@
    会**重装本项目**并重新生成 `Scripts\\oit-portal-tray.exe`；
    而托盘 App 正在运行时该 exe 被 Windows 锁住 →
    pip 报 `[WinError 5] 拒绝访问`，构建在第一步就失败。
+   （更正：当时的解法是「不重装本项目」，结果在 CI 上暴露出 requests 缺失；
+   真正的根因是「托盘进程在跑」，解法是**先停托盘再正常装依赖**。）
 2. `uninstall_windows.ps1` 原本用 PATH 上的 `python` 和 `oit-portal`：
    装在 venv 里时两者都不指向实际安装位置（`oit-portal` 根本不在 PATH 上），
    命令找不到被 `2>$null` 吞掉 → 什么都没卸载，却照旧打印「卸载完成。」。
@@ -24,17 +26,36 @@ BUILD = (SCRIPTS / "build_windows.ps1").read_text(encoding="utf-8-sig")
 UNINSTALL = (SCRIPTS / "uninstall_windows.ps1").read_text(encoding="utf-8-sig")
 
 
-def test_build_script_does_not_reinstall_the_project() -> None:
-    """构建时不得重装本项目 —— 会重写入口 exe，托盘在运行时就被锁住。"""
-    assert ".[tray]" not in BUILD, "pip install .[tray] 会重装本项目，重写被占用的入口 exe"
-    assert "pystray" in BUILD and "pillow" in BUILD and "pyinstaller" in BUILD
-    assert "--paths" in BUILD, "应通过 --paths 从源码树导入 oit_portal，而不是靠安装"
+def test_build_script_installs_project_dependencies() -> None:
+    """构建必须装项目依赖 —— 少了 requests，生成图标那步就 ModuleNotFoundError。
+
+    回归：2026-11-01 首轮 GitHub Actions 里 Windows job 就是挂在
+    `from oit_portal.tray import ...` 报 `No module named 'requests'`。
+    托盘模块会间接 import requests / pycryptodome，只装 pystray+pillow+pyinstaller 不够。
+    """
+    assert '".[tray]"' in BUILD, "必须安装项目本体 + tray extra，否则托盘模块的依赖缺失"
+    assert "pyinstaller" in BUILD
+
+
+def test_build_script_stops_the_running_tray_before_installing() -> None:
+    """重装会重写入口 exe，托盘在跑时 exe 被锁住 → 必须**先停托盘再装**。
+
+    更正：先前一度以为「不重装本项目」才是解法（于是只装 pystray/pillow/pyinstaller），
+    结果在 CI 上暴露出 requests 缺失。真正的根因是「托盘进程在跑」，
+    不是「要重装」—— 先停托盘，正常装依赖即可。
+    """
+    assert 'Get-Process -Name "oit-portal-tray"' in BUILD
+    assert 'Stop-Process -Name "oit-portal-tray"' in BUILD
+    stop_at = BUILD.index('Stop-Process -Name "oit-portal-tray"')
+    install_at = BUILD.index("pip install")
+    assert stop_at < install_at, "停止托盘必须发生在 pip install 之前，否则入口 exe 仍被占用"
 
 
 def test_build_script_refuses_to_overwrite_a_running_exe() -> None:
     """产物正在运行时给出明确提示，而不是让 PyInstaller 报一句看不懂的错。"""
     assert "Get-Process -Name \"OIT-Portal\"" in BUILD
     assert "正在运行" in BUILD
+    assert "--paths" in BUILD, "应通过 --paths 从源码树导入 oit_portal"
 
 
 def test_uninstall_script_takes_an_explicit_python() -> None:
