@@ -25,7 +25,21 @@ if (-not $hasTrayDeps) {
 }
 
 Write-Host "==> [2/4] 安装托盘 App 及依赖" -ForegroundColor Cyan
+# 重装本项目会重新生成 Scripts\oit-portal-tray.exe，而托盘 App 正在运行时
+# 该 exe 被 Windows 锁住 → pip 报 [WinError 5] 拒绝访问，安装在第 2 步就失败
+# （与 build_windows.ps1 是同一个坑）。先停掉运行中的托盘，第 4 步会重新拉起。
+if (Get-Process -Name "oit-portal-tray" -ErrorAction SilentlyContinue) {
+    Write-Host "    停止正在运行的托盘 App（重装需要替换入口 exe）" -ForegroundColor Yellow
+    Stop-Process -Name "oit-portal-tray" -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 1
+}
 & $Python -m pip install --quiet ".[tray]"
+if ($LASTEXITCODE -ne 0) {
+    # 常见于校内网：pip 要拉 setuptools 到隔离构建环境，pypi.org 读超时。
+    # venv 里通常已有 setuptools，直接关掉构建隔离即可离线安装。
+    Write-Host "    常规安装失败（多为拉不到 pypi 的 setuptools），改用 --no-build-isolation 重试" -ForegroundColor Yellow
+    & $Python -m pip install --quiet --no-build-isolation ".[tray]"
+}
 if ($LASTEXITCODE -ne 0) { Fail "pip install 失败" }
 
 $exe = (Get-Command "oit-portal-tray.exe" -ErrorAction SilentlyContinue).Source

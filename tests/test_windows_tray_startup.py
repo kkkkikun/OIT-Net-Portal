@@ -61,6 +61,30 @@ def test_install_script_verifies_the_tray_actually_started() -> None:
     assert "立即退出" in SCRIPT, "托盘启动即退出时应有明确报错"
 
 
+def test_install_script_stops_the_running_tray_before_installing() -> None:
+    """托盘在跑时重跑安装脚本会撞 WinError 5 → 必须先停托盘再 pip install。
+
+    与 `build_windows.ps1` 同一个坑：重装会重写 `Scripts\\oit-portal-tray.exe`，
+    而运行中的托盘正锁着它，pip 直接以 [WinError 5] 拒绝访问失败在第 2 步。
+    """
+    assert 'Get-Process -Name "oit-portal-tray"' in SCRIPT
+    assert 'Stop-Process -Name "oit-portal-tray"' in SCRIPT
+    stop_at = SCRIPT.index('Stop-Process -Name "oit-portal-tray"')
+    install_at = SCRIPT.index('pip install --quiet ".[tray]"')
+    assert stop_at < install_at, "停止托盘必须发生在 pip install 之前，否则入口 exe 仍被占用"
+
+
+def test_install_script_has_offline_fallback() -> None:
+    """校内网常常拉不到 pypi 的 setuptools → 必须有 --no-build-isolation 兜底。
+
+    2026-11-01 实测：pip 隔离构建环境要下 `setuptools>=64`，
+    pypi.org 读超时 → `pip install ".[tray]"` 直接失败在第 2 步。
+    venv 里本来就带 setuptools，关掉构建隔离即可离线装成。
+    """
+    assert "--no-build-isolation" in SCRIPT
+    assert SCRIPT.count("pip install --quiet") >= 2, "应有「常规安装失败后再试一次」的兜底"
+
+
 @pytest.mark.parametrize("needle", ["[1/4]", "[2/4]", "[3/4]", "[4/4]"])
 def test_install_script_has_four_numbered_steps(needle: str) -> None:
     assert needle in SCRIPT
