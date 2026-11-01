@@ -121,7 +121,7 @@ App 已针对这一点做了处理：
 
 ## 6. 从源码构建（开发者）
 
-仓库自带 Gradle Wrapper（Gradle 8.9），**无需自备 Gradle**，只要 JDK 17 与 Android SDK（compileSdk 35）：
+仓库自带 Gradle Wrapper（Gradle 8.9），**无需自备 Gradle**，只要 JDK 17、**Python 3.10** 与 Android SDK（compileSdk 35）：
 
 ```bash
 cd android
@@ -140,6 +140,12 @@ Windows 用 `gradlew.bat`。
 ```
 
 构建需要 `compileSdk 35`、`minSdk 26`、`targetSdk 35`，JDK 17+。Python 侧依赖由 Chaquopy 安装进 APK，构建时会把仓库里的 `oit_portal/` 与 `pyproject.toml` 暂存到构建目录再安装。
+
+> **构建机上必须有 Python 3.10**：Chaquopy 要求「构建机的 Python 大小版本 == App 内嵌的 Python 版本」，
+> App 内嵌版本见 `android/app/build.gradle.kts` 的 `chaquopy { defaultConfig { version = ... } }`（当前 3.10）。
+> 版本对不上会报 `Couldn't find Python 3.10`（2026-11-01 在 GitHub Actions 上首次暴露：
+> runner 镜像自带 Python 3.12，而 App 要的是 3.10）。
+> 临时指定可以用 `chaquopy { defaultConfig { buildPython("/path/to/python3.10") } }`。
 
 ---
 

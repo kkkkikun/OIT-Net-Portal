@@ -35,6 +35,11 @@ val pythonProjectDir = layout.buildDirectory.dir("pythonProject")
 
 chaquopy {
     defaultConfig {
+        // App 内嵌的 Python 版本。
+        // 注意：Chaquopy 要求「构建机的 Python 大小版本必须与这里一致」，
+        // 否则构建报 "Couldn't find Python 3.10"（2026-11-01 在 GitHub Actions 上踩过：
+        // runner 镜像自带 Python 3.12，而这里要的是 3.10）。
+        // 改这个值时，CI 与本地的 Python 版本要一起改。
         version = "3.10"
         pip {
             val customIndex = providers.environmentVariable("PIP_INDEX_URL")

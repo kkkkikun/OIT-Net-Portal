@@ -34,6 +34,14 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+      # Chaquopy 要求「构建机的 Python 大小版本 == App 内嵌的 Python 版本」。
+      # App 内嵌 3.10（android/app/build.gradle.kts 的 chaquopy.version），
+      # 而 runner 镜像自带的是 3.12 → 会报 "Couldn't find Python 3.10"。
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: 确认构建机 Python 版本
+        run: python3.10 --version
       # 不用 android-actions/setup-android：它在 runner 预装 SDK 上会去装早已下架的
       # 'tools' 包，sdkmanager 报 "Failed to find package 'tools'" 并以 exit 1 挂掉整步
       # （2026-11-01 首轮 CI 就是这么红的）。runner 镜像自带完整 SDK，直接用即可。

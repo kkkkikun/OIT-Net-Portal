@@ -293,9 +293,39 @@ PowerShell 5.1 在 `$ErrorActionPreference="Stop"` 下把**任何**原生命令�
 **现象**：`build_windows.ps1` 原本先 `pip install ".[tray]" pyinstaller`。
 托盘 App 正从 venv 里运行时，重装会重新生成 `Scripts\oit-portal-tray.exe`，
 该 exe 被 Windows 锁住 → pip 报 `[WinError 5] 拒绝访问` → **构建在第一步就失败**。
-**教训**：构建脚本只装构建期第三方依赖（`pystray pillow pyinstaller`），
-**不重装本项目**；PyInstaller 用 `--paths "$root"` 从源码树导入 `oit_portal` 即可，
-产物 exe 名字（`OIT-Portal.exe`）与入口脚本名（`oit-portal-tray.exe`）也不同，本来就不该互相踩。
+
+**更正（2026-11-01 晚，同日 GitHub Actions 首轮 CI 复现后）**：
+当时的解法是「构建脚本只装构建期第三方依赖（`pystray pillow pyinstaller`），**不重装本项目**」，
+并把这条写进了契约测试。**这个解法是错的**——CI 上 Windows job 直接挂在
+`from oit_portal.tray import ...`：`ModuleNotFoundError: No module named 'requests'`
+（托盘模块会间接 import `requests` / `pycryptodome`，PyInstaller 分析导入时需要它们真装在环境里）。
+**真正的根因是「托盘进程在跑、锁住了入口 exe」，不是「要重装本项目」**——
+正解是**先停掉运行中的托盘，再正常装 `".[tray]"`**。
+教训：
+1. **绕过症状会制造新缺陷**。「不重装」看起来绕开了 WinError 5，实际上把依赖缺口带到了 CI；
+   遇到「重装被占用」先问「谁占用的」，把它停掉比绕开整步更正确；
+2. **本地实测通过 ≠ 结论正确**。当时的"解法"在用户机器上确实能出 exe，
+   但它把一个环境假设（构建机上恰好有 requests）固化进了脚本；
+3. 契约测试要断言**真实不变量**（「装项目依赖」+「停托盘在装之前」），
+   而不是断言某次事故的绕行方式。
+
+## 踩坑：pytest ≥ 9.2 会往 `propagate=False` 的 logger 挂自己的 handler（2026-11-01）
+
+**现象**：`oit_portal.log.setup_logging()` 用 `if logger.handlers: return logger` 判断「已初始化」。
+本地 pytest 9.0.3 全绿（326 例），GitHub Actions 上同样代码 **3 个日志用例全红**：
+日志文件根本没被创建。
+**根因**：pytest ≥ 9.2 的 logging 插件会把自己的 `LogCaptureHandler`
+（与挂在 root 上的是**同一批对象**）挂到**所有 `propagate=False` 的 logger** 上——
+这样 `caplog` 才抓得到不向上传播的日志。而 `setup_logging()` 自己就设了
+`logger.propagate = False`，于是从第二个用例起 `logger.handlers` 里就挂着 pytest 的 handler，
+旧代码把它误认成「我们初始化过了」→ `RotatingFileHandler` 根本没挂上。
+**教训**：
+1. **幂等判断不能看「有没有 handler」，要看「是不是自己的 handler」**——
+   给本模块挂的 handler 打自有标记（`_oit_portal_own_handler`），判断只看自己挂的；
+2. **「本地绿、CI 红」先怀疑依赖版本差**：本机 pytest 9.0.3 / CI 装到 pytest 9.2.0，
+   行为差异就在这。CI 第一次跑要**主动对齐版本**（CI 里复现一遍再改）；
+3. 复现手法：新建一个干净 venv，`pip install -e ".[dev,tray]"` 后跑同一套用例。
+
 
 ## 踩坑：`pip uninstall` 会静默跳过被占用的入口 exe（2026-11-01）
 
@@ -340,3 +370,34 @@ PowerShell 5.1 在 `$ErrorActionPreference="Stop"` 下把**任何**原生命令�
 **教训**：git 推送报 403 时先看 `git credential fill` 取出来的 username 是谁，别急着怀疑 token 过期。
 需要按账号临时取凭据又不污染全局配置时，可以用**仅本次命令**生效的
 `git -c credential.helper= -c credential.helper='!gh auth git-credential' push ...`。
+
+## 踩坑：`android-actions/setup-android` 会去装早已下架的 `tools` 包（2026-11-01）
+
+**现象**：GitHub Actions 的 Android job 挂在 `android-actions/setup-android@v3` 这一步，
+日志里是 `sdkmanager` 打印 `Warning: Failed to find package 'tools'`，
+随后 `Error: The process '.../sdkmanager' failed with exit code 1`。
+**根因**：该 action 默认 `packages: tools platform-tools`，而 SDK 仓库里的 `tools` 包早已下架，
+`sdkmanager` 找不到就以非 0 退出，把整步带崩（连带许可交互也没走完）。
+**教训**：
+1. **runner 镜像本来就自带完整 SDK**（`ANDROID_HOME=/usr/local/lib/android/sdk`，
+   `cmdline-tools/latest/bin` 在 PATH 上），根本不需要这个 action；
+   直接定位 `sdkmanager` + `sdkmanager --install "platforms;android-35" "build-tools;35.0.0"` 即可；
+2. **`sdkmanager` 是交互式的**，装包前要先接受许可：`yes | sdkmanager --licenses`，
+   否则会卡在 `Review licenses that have not been accepted (y/N)?`；
+3. 顺手写一份 `android/local.properties`（`sdk.dir=...`），Gradle 不必再猜 SDK 位置；
+4. 定位 `sdkmanager` 时别只信 `ANDROID_HOME`：按
+   `PATH → ANDROID_HOME/ANDROID_SDK_ROOT → /usr/local/lib/android/sdk → ~/Android/Sdk` 依次兜底，
+   找不到就**明确报错**，别让构建带着空路径往下跑。
+
+## 踩坑：awk 正则里 `[` 是字符类开头，别用来匹配 Markdown 标题（2026-11-01）
+
+**现象**：发版 workflow 里用
+`awk '$0 ~ "^## \[" tag "\]"' CHANGELOG.md` 抽取对应版本的小节，
+实测**一行都匹配不到**（awk 还会警告 `escape sequence '\[' treated as plain '['`），
+发布说明会退化成一句占位话。shell 单引号 + YAML 纯量 + awk 正则三层转义叠在一起，极易写错。
+**教训**：
+1. **匹配固定前缀用 `index()`，不要用正则**：
+   `index($0, "## [" tag "]") == 1` —— 没有转义问题，也更快；
+2. **凡是「按标题抽取小节」的脚本，都要用真实文件跑一遍验证抽取结果行数**，
+   不能只看 workflow 语法通过（本项目就是语法全绿、逻辑全空）；
+3. 顺手让抽取同时认 `## [1.0.0]` 与 `## [v1.0.0]` 两种写法（CHANGELOG 标题不带 v、标签带 v）。
