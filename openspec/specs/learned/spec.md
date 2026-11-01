@@ -309,6 +309,32 @@ PowerShell 5.1 在 `$ErrorActionPreference="Stop"` 下把**任何**原生命令�
 3. 契约测试要断言**真实不变量**（「装项目依赖」+「停托盘在装之前」），
    而不是断言某次事故的绕行方式。
 
+**补充（2026-11-01 晚）**：`install_windows_tray.ps1` 有**同一个坑** ——
+托盘在跑时重跑安装脚本，同样会在 `pip install ".[tray]"` 处撞 WinError 5，
+而且失败点在第 2 步，**托盘已经被停掉了却没装上**（用户机器上实测）。
+两个脚本现在都遵循「先停运行中的托盘，再装」的顺序。
+
+## 踩坑：pip 的隔离构建环境要联网拉 setuptools（2026-11-01）
+
+**现象**：在用户自己的 Windows 上重跑安装脚本，`pip install ".[tray]"` 失败：
+```
+WARNING: Retrying ... ReadTimeoutError("HTTPSConnectionPool(host='pypi.org', port=443): Read timed out.")
+ERROR: Could not find a version that satisfies the requirement setuptools>=64 (from versions: none)
+ERROR: Failed to build 'file://...' when installing build dependencies
+```
+**根因**：`pip install .` 默认开**构建隔离** —— 它会新建一个临时环境并把
+`setuptools>=64`（`pyproject.toml` 的 `build-system.requires`）**从 pypi 装进去**。
+校内网/受限网络下这一步必挂，**哪怕 venv 里本来就带 setuptools**。
+**教训**：
+1. **受限网络下装本项目要用 `--no-build-isolation`**：
+   直接用 venv 里已有的 setuptools/wheel，完全不联网；
+2. 脚本要写成「常规安装失败 → 用 `--no-build-isolation` 重试」的兜底，
+   而不是直接 Fail —— 前者在联网与不联网的机器上都能装成；
+3. **离线机器上更不能假设 `pip install` 会成功**：装之前先确认
+   `import setuptools` 在目标解释器里可用（venv 里通常有，Python 3.12+ 新建 venv 默认不带）；
+4. 这类失败发生在**改环境**的过程中，脚本必须保证失败后不留下「旧版本被卸、新版本没装上」的半截状态
+   （实测 pip 在构建阶段失败时不会动旧安装，所以 venv 是完好的）。
+
 ## 踩坑：pytest ≥ 9.2 会往 `propagate=False` 的 logger 挂自己的 handler（2026-11-01）
 
 **现象**：`oit_portal.log.setup_logging()` 用 `if logger.handlers: return logger` 判断「已初始化」。
