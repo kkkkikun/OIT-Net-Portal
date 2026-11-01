@@ -20,14 +20,42 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # 手动触发（workflow_dispatch）时按输入的标签构建，保证产物对应标签内容
+          ref: ${{ inputs.tag || github.ref_name }}
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
-      - uses: android-actions/setup-android@v3
+      # 不用 android-actions/setup-android：它会去装早已下架的 'tools' 包，
+      # sdkmanager 以 exit 1 挂掉整步（2026-11-01 首轮 CI 踩过）。runner 镜像自带 SDK。
+      - name: 定位 sdkmanager + 写 local.properties
+        run: |
+          set -e
+          SDKMANAGER="$(command -v sdkmanager || true)"
+          if [ -z "$SDKMANAGER" ]; then
+            for base in "${ANDROID_HOME:-}" "${ANDROID_SDK_ROOT:-}" "/usr/local/lib/android/sdk" "$HOME/Android/Sdk"; do
+              if [ -z "$base" ]; then continue; fi
+              found="$(ls -d "$base"/cmdline-tools/*/bin/sdkmanager 2>/dev/null | sort -V | tail -1)"
+              if [ -n "$found" ]; then SDKMANAGER="$found"; break; fi
+            done
+          fi
+          if [ -z "$SDKMANAGER" ]; then
+            echo "::error::找不到 sdkmanager"
+            exit 1
+          fi
+          # SDK 根目录 = sdkmanager 往上三层（…/cmdline-tools/<ver>/bin/sdkmanager）
+          SDK_ROOT="$(cd "$(dirname "$(readlink -f "$SDKMANAGER")")/../../.." && pwd)"
+          echo "使用 $SDKMANAGER（SDK 根：$SDK_ROOT）"
+          echo "SDKMANAGER=$SDKMANAGER" >> "$GITHUB_ENV"
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "sdk.dir=$SDK_ROOT" > android/local.properties
+      - name: 接受 Android SDK 许可（sdkmanager 是交互式的，全 y）
+        run: yes | "$SDKMANAGER" --licenses || true
       - name: 安装 Android SDK 组件
         run: |
-          sdkmanager --install "platforms;android-35" "build-tools;35.0.0"
+          "$SDKMANAGER" --install "platforms;android-35" "build-tools;35.0.0"
       - uses: gradle/actions/setup-gradle@v4
       - name: 单测 + lint + 构建 APK
         working-directory: android
@@ -43,6 +71,8 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -63,6 +93,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
@@ -79,10 +111,13 @@ jobs:
         run: |
           notes=$(mktemp)
           if [ -f CHANGELOG.md ]; then
-            # 取 CHANGELOG 里对应标签的小节
-            awk -v tag="$TAG" '
-              $0 ~ "^## \\[" tag "\\]" {found=1; next}
-              found && /^## \[/ {exit}
+            # 取 CHANGELOG 里对应标签的小节。
+            # 用 index() 而不是正则：方括号在 ERE 里是字符类开头，转义极易写错
+            # （原写法实测匹配不到任何行，发布说明会退化成一句占位话）。
+            # CHANGELOG 标题不带 v、标签带 v，两种写法都认。
+            awk -v tag="${TAG#v}" '
+              index($0, "## [" tag "]") == 1 || index($0, "## [v" tag "]") == 1 {found=1; next}
+              found && index($0, "## [") == 1 {exit}
               found {print}
             ' CHANGELOG.md > "$notes"
           fi
@@ -91,7 +126,7 @@ jobs:
           fi
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" dist-assets/* --clobber
-            gh release edit "$TAG" --notes-file "$notes"
+            gh release edit "$TAG" --title "OIT-Net-Portal $TAG" --notes-file "$notes"
           else
-            gh release create "$TAG" dist-assets/* --title "$TAG" --notes-file "$notes"
+            gh release create "$TAG" dist-assets/* --title "OIT-Net-Portal $TAG" --notes-file "$notes"
           fi
