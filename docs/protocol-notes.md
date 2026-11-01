@@ -44,6 +44,6 @@
 | C4.2 | SSO cookie 实际存活时长 | ✅ 部分确认：**>5 小时，次日必定失效**（约 6–24h 区间） | 每天最多一次账密重登，其余时间全程免密 |
 | C4.3 | 空闲超时（挂机被踢时间） | 🟡 部分推测 | `success.jsp?liveInterval=0:1958` 提示 1958 秒（≈33 分钟）作为心跳/巡检间隔。**实际空闲超时**可能与该值相关（学校可能在该间隔前后主动断线或由前端定时刷新），待长时挂机实测 |
 | C4.4 | 心跳接口（成功页 JS） | 🟡 已发现 | 成功页调用 `InterFace.do?method=getOnlineUserInfo` + `userV2.do?method=getErrorMsg`（Initiator: `AuthInterFace.js`），频率由 `liveInterval` 控制 |
-| C4.5 | 多设备同账号互踢 | 待确认 | `<CAPTURE:E-3>` |
-| C4.6 | 注销接口 | 🟡 已发现 | 成功页有「注销」按钮，链到 `/eportal/logout.jsp?ms2g=...`（document 302 重定向）。具体 API 端点待确认 |
+| C4.5 | 多设备同账号互踢 | ✅ 非需求（2026-11-01 用户确认销项） | 校园网**允许一个账号同时登录多个设备**，不存在互踢行为，无需实现。协议工作不开工 |
+| C4.6 | 注销接口 | ✅ 端点已确认（2026-11-01） | 接口层端点 = `http://172.16.11.54/eportal/InterFace.do?method=logout`，**不需要 `userIndex`**：仅凭客户端 IP+MAC 即可让该客户端的门户会话失效（实测调用后探测点 204→200，AC 开始注入认证页）。页面级入口仍是成功页「注销」按钮链到的 `/eportal/logout.jsp?ms2g=...`（document 302 重定向）。**App 侧仍未接入注销能力** |
 | C4.7 | 已在线判定特征 | ✅ 已确认 | 探测 URL 返回 204 / `Success`（多探测点双确认）|

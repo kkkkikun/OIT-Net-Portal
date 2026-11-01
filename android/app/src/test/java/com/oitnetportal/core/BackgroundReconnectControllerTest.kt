@@ -43,13 +43,17 @@ class BackgroundReconnectControllerTest {
         core: ScheduledFakeCore,
         states: MutableList<BackgroundReconnectStatus> = mutableListOf(),
         attention: MutableList<String> = mutableListOf(),
+        details: MutableList<String> = mutableListOf(),
         attemptTracker: BackgroundReconnectAttemptTracker = BackgroundReconnectAttemptTracker(),
     ) = BackgroundReconnectController(
         core = core,
         scope = this,
         clock = { testScheduler.currentTime },
         attemptTracker = attemptTracker,
-        onState = { status, _ -> states.add(status) },
+        onState = { status, detail ->
+            states.add(status)
+            details.add(detail)
+        },
         onNeedsAttention = { attention.add(it) },
     )
 
@@ -83,6 +87,56 @@ class BackgroundReconnectControllerTest {
 
         assertEquals(1, core.loginCallCount)
         assertEquals(BackgroundReconnectStatus.MONITORING, states.last())
+        controller.stopAndWait()
+    }
+
+    @Test
+    fun `captive path reports distinguishable auto relogin states`() = runTest {
+        val core = ScheduledFakeCore()
+        core.probeResponses.add(ProbeResult(PortalStatus.CAPTIVE))
+        val details = mutableListOf<String>()
+        val controller = controller(core, details = details)
+
+        controller.start()
+        runCurrent()
+
+        assertTrue(
+            "自动重登前必须有可区分的提示，实际=$details",
+            details.any { it.contains("检测到需要校园网认证") },
+        )
+        assertTrue(
+            "自动重登成功必须有可区分的提示，实际=$details",
+            details.any { it.contains("自动重登成功") },
+        )
+        controller.stopAndWait()
+    }
+
+    @Test
+    fun `online patrol keeps the plain monitoring detail`() = runTest {
+        val core = ScheduledFakeCore()
+        val details = mutableListOf<String>()
+        val controller = controller(core, details = details)
+
+        controller.start()
+        runCurrent()
+
+        assertEquals("网络在线，后台巡检中", details.last())
+        controller.stopAndWait()
+    }
+
+    @Test
+    fun `already online login outcome is still distinguishable from plain patrol`() = runTest {
+        val core = ScheduledFakeCore()
+        core.probeResponses.add(ProbeResult(PortalStatus.CAPTIVE))
+        core.loginResult = LoginResult(LoginOutcome.ALREADY_ONLINE)
+        val details = mutableListOf<String>()
+        val controller = controller(core, details = details)
+
+        controller.start()
+        runCurrent()
+
+        assertTrue("实际=$details", details.any { it.contains("检测到需要校园网认证") })
+        assertTrue("实际=$details", details.any { it.contains("已在线") })
         controller.stopAndWait()
     }
 

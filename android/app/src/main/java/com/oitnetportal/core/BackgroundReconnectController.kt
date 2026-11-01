@@ -94,6 +94,9 @@ class BackgroundReconnectController(
             return backoffState(remaining, "等待安全重登间隔")
         }
         attemptTracker.lastLoginAttemptAt = clock()
+        // 重登路径必须与普通巡检可区分：否则成功重登的日志和「本来就在线」逐字相同，
+        // 事后无法判断是否真的发生过自动重登（2026-11-01 真机验收发现）。
+        onState(BackgroundReconnectStatus.MONITORING, "检测到需要校园网认证，正在自动重登")
         return handleLogin(safeLogin())
     }
 
@@ -106,7 +109,8 @@ class BackgroundReconnectController(
     }
 
     private fun handleLogin(result: LoginResult): Long? = when (result.outcome) {
-        LoginOutcome.ALREADY_ONLINE, LoginOutcome.LOGGED_IN -> healthyDelay()
+        LoginOutcome.ALREADY_ONLINE -> healthyDelay("自动重登检查完成，校园网已在线")
+        LoginOutcome.LOGGED_IN -> healthyDelay("自动重登成功，网络在线")
         LoginOutcome.NO_NETWORK -> monitoringDelay(OFFLINE_INTERVAL_MS, "等待网络恢复")
         LoginOutcome.FAILED -> failedLoginDelay()
         LoginOutcome.NEED_CREDENTIALS -> needsAttention("请更新校园网账号或密码")
@@ -114,10 +118,10 @@ class BackgroundReconnectController(
         LoginOutcome.LOGIN_REJECTED -> needsAttention("校园网账号或密码被拒绝")
     }
 
-    private fun healthyDelay(): Long {
+    private fun healthyDelay(detail: String = "网络在线，后台巡检中"): Long {
         probeFailures = 0
         attemptTracker.loginFailures = 0
-        return monitoringDelay(ONLINE_INTERVAL_MS, "网络在线，后台巡检中")
+        return monitoringDelay(ONLINE_INTERVAL_MS, detail)
     }
 
     private fun monitoringDelay(delayMillis: Long, detail: String): Long {

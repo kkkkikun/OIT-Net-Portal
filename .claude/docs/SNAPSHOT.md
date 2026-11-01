@@ -1,6 +1,6 @@
 # SNAPSHOT.md — 项目状态快照
 
-> 最后更新: 2026-10-27 | 验证: pytest 294 passed (无网络) + Android testDebugUnitTest 48 例 + clean assembleDebug/lintDebug（2026-10-25）
+> 最后更新: 2026-11-01 | 验证: pytest 300 passed (无网络) + Android testDebugUnitTest 53 例 + clean assembleDebug/lintDebug + vivo V1936A 真机复现验收（2026-10-31）+ 红米 K50 Ultra / Android 15 通知权限路径验收（2026-11-01）
 
 ## 项目概览
 
@@ -18,7 +18,7 @@
 |---|---|
 | 语言 | Python 3.9+ |
 | 依赖 | requests, pycryptodome (可选 AES), tomli (<3.11) |
-| 测试 | pytest，294 用例全部无网络（FakeSession + fixture 状态机 + Android/Windows 托盘/Linux 打包静态契约测试）；Android 另有 48 例 JUnit 单测 |
+| 测试 | pytest，300 用例全部无网络（FakeSession + fixture 状态机 + Android/Windows 托盘/Linux 打包静态契约测试）；Android 另有 48 例 JUnit 单测 |
 | 打包 | pyproject.toml + setuptools，console_scripts: oit-portal；Linux 离线包 `scripts/build_linux.sh`（wheelhouse tar.gz + SHA256）；Windows PyInstaller exe |
 | 格式化 | 无强制工具，遵循现有代码风格 |
 
@@ -86,7 +86,13 @@ openspec/                   # OpenSpec 规范体系（specs/ + changes/）
 
 - **阶段**: 三端 + 路线B Android 功能齐备；VPN 分流（三端）、`configure` 交互命令、Linux 离线安装包均已落地并提交；Jetson Nano 已端到端部署正常运行
 - **已完成**: Android 后台自动重连已于 2026-10-27 完成 Android 9 真机验收（vivo V1936A）：默认关闭/开启+通知/通知停止/断网监控恢复/结束会话全部通过；openspec change `android-background-auto-reconnect` 17/17 任务完成
-- **遗留问题**: P1——厂商杀死进程后重开 App 不恢复服务且状态文本陈旧（见 `android/validation/2026-10-27-background-reconnect/report.md`）；vivo 划卡杀进程 sticky 不重启与默认禁通知为厂商行为已记录；Android 13+ 通知权限路径待可用设备
+- **已完成（2026-10-31）**: P1 修复（进程被杀后重开 App 自动恢复后台服务并纠正陈旧状态）、P2 通知可见性检测与设置页警告卡、Material3 `surfaceContainer*` 配色错配修复、真实 VPN 验收（debug 变体自建黑洞 VPN）、`docs/android-setup.md` 用户部署文档
+- **新设备就位（2026-10-31）**: Debug APK 已装到**红米 K50 Ultra（22081212C，HyperOS 2 / Android 15 / API 35）**（`com.oitnetportal` v0.1.0，运行时权限已全授予）。同机另完成非项目范围的系统字体改造（汉仪新蒂黑板报体底字全局生效 + 度量修正 + 三档切换模块，见 `/mnt/d/oit-fonts/`）
+- **Android 13+ 通知权限路径已验收（2026-11-01）**: 红米 K50 Ultra / Android 15 真机跑通 `POST_NOTIFICATIONS` 弹窗**允许与拒绝两条分支**（允许→常驻通知真实展示 `vis=PRIVATE`；拒绝→服务不启动 + `enabled=false` + 提示「未授予通知权限，后台自动重连保持关闭」+ 诊断事件）；同时在 Android 15 上复验 P1（force-stop 后重开自动恢复服务）与 P2（通知被撤销→设置页红色警告卡 +「打开通知设置」直达 `AppNotificationSettingsActivity`）、真实校园网登录（`OIT-XUESHENG` → CONNECTED）、断网→恢复巡检、「结束本次会话」。验收记录：`android/validation/2026-11-01-redmi-android15/report.md`
+- **协议 C4.6 端点已确认（2026-11-01）**: 门户注销的接口层端点 = `http://172.16.11.54/eportal/InterFace.do?method=logout`，**不需要 `userIndex`**（仅凭 IP+MAC 即让该客户端会话失效，实测 204→200）；App 侧仍未接入该能力
+- **字体侧收尾（2026-11-01）**: 阅读页 `【】` 异常经 STOCK 对照实验判定为 **App 侧问题**（系统字体原厂时同样不对称）；字体侧已把括号轮廓嵌入 Hanyi 本体（`embed_bracket_glyphs.py`），括号与正文同字体同字号、贴内缘；剩余偏心源于原文 `【` 后的空格，已出交接文档 `docs/APP-HANDOFF-BRACKET.md`（字体仓库 `kkkkikun/oit-font-switch`）。设备当前 = `chalk` 模式
+- **遗留问题**: **新发现一项待处理**（见 tasks.md）：外部注销打不掉 App 自己的 session cookie → 「自动重登」端到端触发尚无法从 App 外部制造（**非缺陷**，是验收方法的边界）；协议 C4.6 App 侧注销功能未接入（端点已确认）。协议 C4.5 已于 2026-11-01 销项（校园网允许一账号多设备，无互踢需求）
+- **P3/P4 已修（2026-11-01）**: ①新增 `core/NetworkValidationGate.kt`——默认网络「验证通过」只放行一次翻转，`MainActivity.onCapabilitiesChanged` 不再每几秒触发一次探测；红米真机静置 150 秒的校准事件从 25~100 条降到 **0 条**，一次 Wi-Fi 断开→重连后诊断事件总数 4 条。②`BackgroundReconnectController` 的重登路径改用区分性文案（「检测到需要校园网认证，正在自动重登」/「自动重登成功，网络在线」），普通巡检仍是「网络在线，后台巡检中」。Android 单测 53→**61 例**
 - **已归档 change**: android-ui-refresh（2026-10-27）、android-background-auto-reconnect（2026-10-27）
 
 ## 安全红线（改代码前自查）

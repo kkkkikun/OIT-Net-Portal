@@ -13,6 +13,7 @@ import com.oitnetportal.core.AndroidNotificationStatusProvider
 import com.oitnetportal.core.AndroidWifiIdentityProvider
 import com.oitnetportal.core.AppSettingsStore
 import com.oitnetportal.core.ChaquopyPortalCoreBridge
+import com.oitnetportal.core.NetworkValidationGate
 import com.oitnetportal.core.PersistentBackgroundReconnectStateStore
 import com.oitnetportal.core.UnavailablePortalCoreBridge
 import com.oitnetportal.service.BackgroundReconnectServiceController
@@ -38,6 +39,9 @@ class MainActivity : ComponentActivity() {
     }
 
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
+
+    /** 只放行「验证通过」那一次翻转，避免能力抖动反复触发状态校准。 */
+    private val validationGate = NetworkValidationGate()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -71,16 +75,18 @@ class MainActivity : ComponentActivity() {
                 network: Network,
                 networkCapabilities: NetworkCapabilities,
             ) {
-                // 仅在系统完成网络验证后触发一次状态校准，避免能力抖动反复探测
-                if (networkCapabilities.hasCapability(
-                        NetworkCapabilities.NET_CAPABILITY_VALIDATED
-                    )
-                ) {
+                // 仅在网络「刚刚完成验证」时触发一次状态校准：
+                // 能力回调会随信号强度/带宽持续到来，每次都校准会把诊断日志刷爆。
+                val validated = networkCapabilities.hasCapability(
+                    NetworkCapabilities.NET_CAPABILITY_VALIDATED
+                )
+                if (validationGate.onValidatedStateChanged(validated)) {
                     portalViewModel.onNetworkAvailable()
                 }
             }
 
             override fun onLost(network: Network) {
+                validationGate.reset()
                 portalViewModel.onNetworkLost()
             }
         }
