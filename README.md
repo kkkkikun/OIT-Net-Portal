@@ -10,7 +10,8 @@
 
 <p align="center">
   <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.9%2B-3776AB?logo=python&logoColor=white" alt="Python 3.9+"></a>
-  <img src="https://img.shields.io/badge/tests-294%20passed-brightgreen" alt="294 tests passed">
+  <img src="https://img.shields.io/badge/tests-324%20passed-brightgreen" alt="324 tests passed">
+  <a href="https://github.com/kkkkikun/OIT-Net-Portal/releases"><img src="https://img.shields.io/badge/release-v1.0.0-blue" alt="v1.0.0"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License"></a>
 </p>
 
@@ -89,6 +90,10 @@ python -m pytest       # 全部用例（无网络）
 
 本项目仅供**个人学习研究**与便捷接入本人已获授权的校园网，不含任何绕过、破解行为；
 登录使用的账号密码为你本人凭据。请遵守学校网络使用规定；因使用本工具造成的任何后果由使用者自行承担。
+
+## 📋 更新日志
+
+见 [CHANGELOG.md](CHANGELOG.md)；Release 页面在 [Releases](https://github.com/kkkkikun/OIT-Net-Portal/releases)。
 
 ## 许可
 
