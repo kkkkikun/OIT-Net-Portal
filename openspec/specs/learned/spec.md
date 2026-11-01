@@ -313,3 +313,30 @@ PowerShell 5.1 在 `$ErrorActionPreference="Stop"` 下把**任何**原生命令�
 3. **凡是"报告成功"的脚本，都要有一条独立的核实路径**——
    安装脚本的「完成！」和卸载脚本的「卸载完成。」原本都是无条件打印的，
    这类假成功比崩溃更伤人。
+
+## 踩坑：重写 git 历史 ≠ GitHub 上立刻消失（2026-11-01）
+
+**现象**：用 `git filter-repo --blob-callback` 把公开仓库里一张含**真实姓名 + 工号**的截图
+在所有历史提交中的原始 blob 替换成遮盖版，并强推了分支。
+本地 `git cat-file -e <旧blob>` 已经「不存在」，全新克隆里也确认只剩遮盖版。
+**但 `gh api repos/.../git/blobs/<旧SHA>` 仍然返回 200 —— 旧图还能按 SHA 取到。**
+**根因**：GitHub 不会在推送时立刻删除不可达对象（dangling objects），
+它们留在对象库里，直到平台自己的 GC 回收为止（通常几天到几周）。
+**教训**：
+1. **重写历史 ≠ 立刻擦除**。想确认「真的没了」，要查对象库而不是查 ref 可达性 ——
+   **唯一可靠的判据是「全新克隆里还有没有」**；
+2. 已公开过敏感内容的对象，必要时只能通过 GitHub Support 申请加速清理；
+3. 更好的防线在前面：**先遮盖、再推送**。本项目三个验收目录里，
+   两个是在推送前就遮盖的（历史干净），只有最早那批目录真的漏了 —— 差别就在这一步；
+4. 推之前先查一遍 `git ls-remote` 看哪些目录**已经**公开，比事后补救便宜得多。
+
+## 踩坑：`.git-credentials` 里的 GitHub 账号可能不是你以为的那个（2026-11-01）
+
+**现象**：本轮强推时 GitHub 返回 `Permission to kkkkikun/OIT-Net-Portal.git denied to LL-ki`，
+而同一个会话里前两次普通 push 是成功的。查 `~/.git-credentials` 发现 github.com 那条
+存的 username 是 **`LL-ki`**（文件 mtime 显示是被别的进程改写的），不是仓库归属的 `kkkkikun`。
+**根因**：`credential.helper = store` 只会**盲取**第一条匹配记录，不校验该 token 对哪个账号有效；
+`gh auth status` 里的活动账号（kkkkikun）与 git 推送实际用的凭据**是两套东西**。
+**教训**：git 推送报 403 时先看 `git credential fill` 取出来的 username 是谁，别急着怀疑 token 过期。
+需要按账号临时取凭据又不污染全局配置时，可以用**仅本次命令**生效的
+`git -c credential.helper= -c credential.helper='!gh auth git-credential' push ...`。

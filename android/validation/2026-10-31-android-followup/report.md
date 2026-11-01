@@ -203,4 +203,5 @@ Android assembleDebug / lintDebug        BUILD SUCCESSFUL
 > ⚠️ **隐私处理（2026-11-01）**：本仓库是**公开仓库**。
 > `01-connect.png` / `06-final-connect.png` 原先直接可见账号类型、**真实姓名**与**工号**，
 > 现已用黑块遮盖（蓝色账号行整段 + 输入框里的工号），标签与界面结构保留。
-> **git 历史里仍保留着未遮盖的原始图片** —— 彻底清除需 `git filter-repo` 重写历史并强推。
+> **历史是干净的**：本目录的引入提交在**推送前**就已遮盖，历史里从未有过未遮盖原图。
+> （同期为稳妥起见，也一并跑了 `git filter-repo` + 强推，见 `2026-10-27-background-reconnect/report.md`。）

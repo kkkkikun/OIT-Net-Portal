@@ -37,16 +37,7 @@
 ## 待决策（需要用户操作，Agent 无法代做）
 
 - [ ] **Windows 端「真实静默登录」验收** —— 需要校园网密码。托盘已装好并运行中（`D:\oit-portal-venv312`，账号已从 `config.toml` 预填），**设置窗口已经开在用户桌面上**：在窗口里输入密码 → 点「保存并连接」→ 托盘图标应先变「检测中」再变「在线」。密码不经过 Agent，全程在用户本机输入。验收清单第 1/2/3 项都依赖这一步
-- [ ] **公开历史里残留的未遮盖原图 —— 待用户决定是否重写历史**（2026-11-01 推送前复查得出，比原先估计的严重）：
-    - **实际只有 1 个文件**进了公开历史：`android/validation/2026-10-27-background-reconnect/00_screen_state.png`
-      （引入提交 `5c4e1c2`，该提交已在 `origin/android-app` 历史里）。
-      里面是**真实姓名 + 工号**（教师账号），比单纯学号更敏感，现在仍可通过 GitHub 历史按 SHA 取出。
-    - 另两个目录（`2026-10-31-android-followup` / `2026-11-01-redmi-android15`）的引入提交
-      （`ce1b042` / `4dcbdf0`）是在**推送前就已遮盖**，历史里是干净版本，**无需处理**。
-    - 已在镜像克隆里演练过重写：用 `git filter-repo --blob-callback` 把旧 blob
-      `97d8f49` 替换成已遮盖的 `6085539c`，结果 = 旧 blob 从对象库消失、
-      所有历史提交都指向新 blob、文件本身保留。**唯一代价是所有提交的 SHA 都会变，需要强推**。
-    - 不重写的后果：姓名 + 工号持续公开可下载；已克隆过仓库的人手里仍有旧对象。
+
 
 ## 阻塞项
 
@@ -62,6 +53,18 @@
 ## 已完成（近期）
 
 - [x] **Windows 端 PC 侧全链路实测与 4 个真缺陷修复**（2026-11-01，在用户自己的中文 Windows / PowerShell 5.1.26100.9711 上实测）：①4 个 `.ps1` 是 UTF-8 无 BOM + 含中文 → PS 5.1 按 ANSI 解码吞掉引号 → 语法错误，**文档推荐的托盘安装/卸载方式在中文 Windows 上完全不可用** → 全部加 UTF-8 BOM（`tests/test_windows_script_encoding.py` 守住）；②`stop` 在无 daemon 时打 ERROR 到 stderr → PS 5.1 在 `$ErrorActionPreference="Stop"` 下把 stderr 当终止错误 → 安装脚本第 2 步被打断、**托盘根本没启动** → `stop` 改幂等返回 0 + INFO（`tests/test_daemon_stop.py`）；③缺 tkinter 只提示 `pip install .[tray]`（tkinter 不是 pip 包）且托盘崩了仍照报「完成！」→ 区分 tkinter/其他依赖 + 安装脚本改 4 步带存活校验（`tests/test_windows_tray_startup.py`）；④`build_windows.ps1` 重装本项目撞被占用的入口 exe（WinError 5）、`uninstall_windows.ps1` 用 PATH 上的 `python`/`oit-portal`（venv 场景下不存在）却照报「卸载完成」→ 改为只装第三方依赖 + `-Python` 参数 + 卸载核实（`tests/test_windows_build_uninstall.py`）。实测通过：4 脚本 PS 解析全 OK、托盘安装 4 步全绿且进程存活、独立 exe 自包含能弹窗、卸载后包/自启项/入口 exe/`~` 临时目录全清干净、`-Purge` 用假 APPDATA 验证生效。pytest 309→324
+- [x] **公开历史里残留的未遮盖原图 —— 已于 2026-11-01 重写历史清除**（原为待决策）：
+    - **实际只有 1 个文件**进了公开历史：`android/validation/2026-10-27-background-reconnect/00_screen_state.png`
+      （引入提交 `5c4e1c2`）。里面是**真实姓名 + 工号**（教师账号），比单纯学号更敏感。
+    - 另两个目录（`2026-10-31-android-followup` / `2026-11-01-redmi-android15`）的引入提交
+      （`ce1b042` / `4dcbdf0`）是在**推送前就已遮盖**，历史里是干净版本，本就没进过公开历史。
+    - 处置：`git filter-repo --blob-callback` 把旧 blob `97d8f49` 替换成遮盖版 `6085539c`
+      并强推 `android-app`（`40a9d72 → e484110`）。**所有提交的 SHA 都变了**，
+      旧分支尖端已不在任何 ref 上。
+    - 核验：旧 blob 已从本地对象库消失；**全新克隆里该文件在所有历史提交中都只有遮盖版**，
+      旧 blob 不在克隆的对象库里 ✅。
+    - **残留边界**：GitHub 自己仍会在 GC 前短暂保留不可达对象（`gh api .../git/blobs/97d8f49`
+      目前仍返回 200），随后由平台自动清除；必要时可向 GitHub Support 申请加速。
 - [x] **验收截图的学号遮盖**（2026-11-01：本仓库 `kkkkikun/OIT-Net-Portal` 是**公开仓库**，截图里原本直接可见学号）：按用户决定用新提交遮盖 8 张图 / 17 处（整串 13 处用模板匹配定位，最近任务卡片里被遮挡的片段 4 处手工补），标签与界面结构完整保留；复检整串与 4 位前缀在 25 张图多尺度下均 0 命中；补录 5 张此前未入库的证据（HyperOS 最近任务界面 + 阅读页【异能】实拍，`25` 更名为 `25-bracket-reading-page.png`）
 - [x] **Android UI 细节优化**（2026-10-31 修完，2026-11-01 销项：Material3 `surfaceContainer*` 角色缺失导致的卡片配色错配、恒定禁用的死按钮；原「界面不和谐」主因——设备系统字体被改成「新蒂黑板报底字」——**已解决**：红米上该字体现为可切换模块（`chalk` / `optional` / `stock` 三档），**手机端 Termux 里敲 `oit-font` 即可交互切换**（已装机实测：菜单渲染 + 切换后 bind 2↔6、命中 1↔20 正确），不和谐时一条命令切回原厂；App 侧自身配色已固定。**工具链已入库 `github.com/kkkkikun/oit-font-switch`（private，含一键部署脚本 + 机制文档；仓库不含字体本体）**）
 
