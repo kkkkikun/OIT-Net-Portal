@@ -34,6 +34,11 @@
 
 - [x] 协议 C4.6 App 侧注销功能 —— **2026-11-01 用户确认暂不做**（当前没有需求）。端点已确认可用备查：`http://172.16.11.54/eportal/InterFace.do?method=logout`，**不需要 `userIndex`**，仅凭 IP+MAC 即可让该客户端会话失效。App 侧现「结束本次会话」只关本地 Python 会话，界面已明确说明「不会向校园网服务器发送退出请求」；真要接这个能力时按此端点实现即可
 
+## 待决策（需要用户操作，Agent 无法代做）
+
+- [ ] **Windows 端「真实静默登录」验收** —— 需要校园网密码。托盘已装好并运行中（`D:\oit-portal-venv312`，账号已从 `config.toml` 预填），**设置窗口已经开在用户桌面上**：在窗口里输入密码 → 点「保存并连接」→ 托盘图标应先变「检测中」再变「在线」。密码不经过 Agent，全程在用户本机输入。验收清单第 1/2/3 项都依赖这一步
+- [ ] **验收截图的 git 历史是否重写** —— 新提交已把学号遮盖（8 张图 / 17 处），但历史里仍是原始图片。要彻底清除需 `git filter-repo` 重写历史并强推（会改写已发布的提交哈希），等用户决定
+
 ## 阻塞项
 
 - [ ] **阅读页 `【】` 左右不对称 —— 等待用户转交给开发「超级看书」的 Agent**（2026-11-01：**已定位到 App 侧，非系统字体问题**。STOCK 对照实验证明——系统字体 100% 原厂 MiSans 时同样不对称（`【`→正文 59px vs 正文→`】` 12px），黑板报体下是 71px vs 12px，差值恰等于两种字体空格步进之差（0.11em≈12px）；根因是**原文 `【` 后带了一个空格**，由正文字体渲染。字体侧已做能做的：把透镜括号轮廓**嵌入 Hanyi 本身**（`tools/embed_bracket_glyphs.py`），括号从此与正文同字体同字号（92px→97px）、贴内缘（71→61px / 12→2px），不再是「另一个字体的粗黑楔块」。**剩余偏心量属 App 侧**，交接文档 `docs/APP-HANDOFF-BRACKET.md`（字体仓库 `kkkkikun/oit-font-switch` 内）给了 CSS `text-spacing-trim: trim-both` 与文本清洗两种修法）
@@ -47,6 +52,8 @@
 
 ## 已完成（近期）
 
+- [x] **Windows 端 PC 侧全链路实测与 4 个真缺陷修复**（2026-11-01，在用户自己的中文 Windows / PowerShell 5.1.26100.9711 上实测）：①4 个 `.ps1` 是 UTF-8 无 BOM + 含中文 → PS 5.1 按 ANSI 解码吞掉引号 → 语法错误，**文档推荐的托盘安装/卸载方式在中文 Windows 上完全不可用** → 全部加 UTF-8 BOM（`tests/test_windows_script_encoding.py` 守住）；②`stop` 在无 daemon 时打 ERROR 到 stderr → PS 5.1 在 `$ErrorActionPreference="Stop"` 下把 stderr 当终止错误 → 安装脚本第 2 步被打断、**托盘根本没启动** → `stop` 改幂等返回 0 + INFO（`tests/test_daemon_stop.py`）；③缺 tkinter 只提示 `pip install .[tray]`（tkinter 不是 pip 包）且托盘崩了仍照报「完成！」→ 区分 tkinter/其他依赖 + 安装脚本改 4 步带存活校验（`tests/test_windows_tray_startup.py`）；④`build_windows.ps1` 重装本项目撞被占用的入口 exe（WinError 5）、`uninstall_windows.ps1` 用 PATH 上的 `python`/`oit-portal`（venv 场景下不存在）却照报「卸载完成」→ 改为只装第三方依赖 + `-Python` 参数 + 卸载核实（`tests/test_windows_build_uninstall.py`）。实测通过：4 脚本 PS 解析全 OK、托盘安装 4 步全绿且进程存活、独立 exe 自包含能弹窗、卸载后包/自启项/入口 exe/`~` 临时目录全清干净、`-Purge` 用假 APPDATA 验证生效。pytest 309→324
+- [x] **验收截图的学号遮盖**（2026-11-01：本仓库 `kkkkikun/OIT-Net-Portal` 是**公开仓库**，截图里原本直接可见学号）：按用户决定用新提交遮盖 8 张图 / 17 处（整串 13 处用模板匹配定位，最近任务卡片里被遮挡的片段 4 处手工补），标签与界面结构完整保留；复检整串与 4 位前缀在 25 张图多尺度下均 0 命中；补录 5 张此前未入库的证据（HyperOS 最近任务界面 + 阅读页【异能】实拍，`25` 更名为 `25-bracket-reading-page.png`）
 - [x] **Android UI 细节优化**（2026-10-31 修完，2026-11-01 销项：Material3 `surfaceContainer*` 角色缺失导致的卡片配色错配、恒定禁用的死按钮；原「界面不和谐」主因——设备系统字体被改成「新蒂黑板报底字」——**已解决**：红米上该字体现为可切换模块（`chalk` / `optional` / `stock` 三档），**手机端 Termux 里敲 `oit-font` 即可交互切换**（已装机实测：菜单渲染 + 切换后 bind 2↔6、命中 1↔20 正确），不和谐时一条命令切回原厂；App 侧自身配色已固定。**工具链已入库 `github.com/kkkkikun/oit-font-switch`（private，含一键部署脚本 + 机制文档；仓库不含字体本体）**）
 
 - [x] **P3 修复：`onCapabilitiesChanged` 去抖，诊断事件不再刷爆**（2026-11-01：新增 `core/NetworkValidationGate.kt`——只放行「验证状态从未验证翻转为已验证」这一次翻转，`onLost` 复位；`MainActivity` 的 `onCapabilitiesChanged` 改走闸门。5 个新 JUnit；红米真机回归：静置 150 秒事件数从几十条降到 0 条）
