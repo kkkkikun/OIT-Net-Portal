@@ -1,6 +1,6 @@
 # tasks.md — 全局任务追踪
 
-> 最后更新: 2026-10-31
+> 最后更新: 2026-11-01
 > 与 openspec/changes/ 的关系: 大改动走 `/opsx:propose` 生成 change 提案（openspec/changes/<name>/）；这里只记跨 change 的长期事项与日常待办。
 
 ## 进行中
@@ -30,16 +30,24 @@
 
 ## 待办
 
-- [ ] Android UI 细节优化（2026-10-31：已修 Material3 `surfaceContainer*` 角色缺失导致的卡片配色错配、去掉恒定禁用的死按钮；原"界面不和谐"主因（设备系统字体被改成"新蒂黑板报底字"）**已解决**——红米上该字体现为可切换模块（`chalk` / `optional` / `stock` 三档），**手机端 Termux 里敲 `oit-font` 即可交互切换**（已装机实测：菜单渲染 + 切换后 bind 2↔6、命中 1↔20 正确），不和谐时一条命令切回原厂；App 侧自身配色已固定。**工具链已入库 `github.com/kkkkikun/oit-font-switch`（private，含一键部署脚本 + 机制文档；仓库不含字体本体）**）
-- [ ] 阅读页 `【】` 左右不对称（2026-11-01：**已定位到 App 侧，非系统字体问题**。STOCK 对照实验证明——系统字体 100% 原厂 MiSans 时同样不对称（`【`→正文 59px vs 正文→`】` 12px），黑板报体下是 71px vs 12px，差值恰等于两种字体空格步进之差（0.11em≈12px）；根因是**原文 `【` 后带了一个空格**，由正文字体渲染。字体侧已做能做的：把透镜括号轮廓**嵌入 Hanyi 本身**（`tools/embed_bracket_glyphs.py`），括号从此与正文同字体同字号（92px→97px）、贴内缘（71→61px / 12→2px），不再是「另一个字体的粗黑楔块」。**剩余偏心量属 App 侧**，交接文档 `docs/APP-HANDOFF-BRACKET.md`（字体仓库 `kkkkikun/oit-font-switch` 内）给了 CSS `text-spacing-trim: trim-both` 与文本清洗两种修法，待开发该 App 的 Agent 处理）
-- [ ] **P5：「自动重登」端到端触发无法从 App 外部制造**（2026-11-01：门户侧 `InterFace.do?method=logout` 能注销该 IP+MAC 的匿名会话（探测 204→200），但 **App 的探测带自己的 session cookie，AC 认这个 cookie**，App 状态仍是「网络在线」。即自动重登的触发条件必须由 AC 主动作废 App 的 cookie 才出现。这条同时说明 App 会话具备「抗外部注销」能力。**非缺陷，是验收方法的边界**）
-- [ ] 协议 C4.6 App 侧注销功能（**端点已确认** 2026-11-01：`http://172.16.11.54/eportal/InterFace.do?method=logout`，**不需要 `userIndex`**，仅凭 IP+MAC 即可让该客户端会话失效；App 侧尚未接入该能力）
+只剩一条真正待决策的实现项：
+
+- [ ] **协议 C4.6 App 侧注销功能**（端点已确认 2026-11-01：`http://172.16.11.54/eportal/InterFace.do?method=logout`，**不需要 `userIndex`**，仅凭 IP+MAC 即可让该客户端会话失效；App 侧尚未接入。**要不要做是产品决策**：现「结束本次会话」只关本地 Python 会话，界面已明确说明「不会向校园网服务器发送退出请求」）
 
 ## 阻塞项
 
-- 无
+- [ ] **阅读页 `【】` 左右不对称 —— 等待用户转交给开发「超级看书」的 Agent**（2026-11-01：**已定位到 App 侧，非系统字体问题**。STOCK 对照实验证明——系统字体 100% 原厂 MiSans 时同样不对称（`【`→正文 59px vs 正文→`】` 12px），黑板报体下是 71px vs 12px，差值恰等于两种字体空格步进之差（0.11em≈12px）；根因是**原文 `【` 后带了一个空格**，由正文字体渲染。字体侧已做能做的：把透镜括号轮廓**嵌入 Hanyi 本身**（`tools/embed_bracket_glyphs.py`），括号从此与正文同字体同字号（92px→97px）、贴内缘（71→61px / 12→2px），不再是「另一个字体的粗黑楔块」。**剩余偏心量属 App 侧**，交接文档 `docs/APP-HANDOFF-BRACKET.md`（字体仓库 `kkkkikun/oit-font-switch` 内）给了 CSS `text-spacing-trim: trim-both` 与文本清洗两种修法）
+
+## 已知边界（不是待办，不用做）
+
+- **「自动重登」端到端触发无法从 App 外部制造**（2026-11-01）：门户侧 `InterFace.do?method=logout` 能注销该 IP+MAC 的**匿名**会话（探测 204→200），但 **App 的探测带自己的 session cookie，AC 认这个 cookie**，App 状态仍是「网络在线」。自动重登的触发条件必须由 **AC 主动作废 App 的 cookie** 才出现，外部造不出来。**这是验收方法的边界，不是缺陷** —— 反过来还说明 App 会话具备「抗外部注销」能力。要验这条，只能等校园网会话自然过期时观察
+- **长期稳定性（>24h 保活）未做长跑**：本次只在单次会话内验证
+- **HyperOS 厂商省电策略下的存活率未测**：只验证过 `START_STICKY` 被系统重启一次
+- **P3/P4 的新 APK 只在红米（Android 15）复验**：vivo（Android 9）上仍是旧版本，下次接 vivo 时顺带回归
 
 ## 已完成（近期）
+
+- [x] **Android UI 细节优化**（2026-10-31 修完，2026-11-01 销项：Material3 `surfaceContainer*` 角色缺失导致的卡片配色错配、恒定禁用的死按钮；原「界面不和谐」主因——设备系统字体被改成「新蒂黑板报底字」——**已解决**：红米上该字体现为可切换模块（`chalk` / `optional` / `stock` 三档），**手机端 Termux 里敲 `oit-font` 即可交互切换**（已装机实测：菜单渲染 + 切换后 bind 2↔6、命中 1↔20 正确），不和谐时一条命令切回原厂；App 侧自身配色已固定。**工具链已入库 `github.com/kkkkikun/oit-font-switch`（private，含一键部署脚本 + 机制文档；仓库不含字体本体）**）
 
 - [x] **P3 修复：`onCapabilitiesChanged` 去抖，诊断事件不再刷爆**（2026-11-01：新增 `core/NetworkValidationGate.kt`——只放行「验证状态从未验证翻转为已验证」这一次翻转，`onLost` 复位；`MainActivity` 的 `onCapabilitiesChanged` 改走闸门。5 个新 JUnit；红米真机回归：静置 150 秒事件数从几十条降到 0 条）
 - [x] **P4 修复：后台自动重登在日志/通知里可区分**（2026-11-01：`BackgroundReconnectController.handleCaptive()` 提交凭据前发 `检测到需要校园网认证，正在自动重登`；`handleLogin` 成功后发 `自动重登成功，网络在线` / `自动重登检查完成，校园网已在线`；普通巡检仍是 `网络在线，后台巡检中`。3 个新 JUnit）
