@@ -197,3 +197,10 @@ Android testDebugUnitTest                53 例（新增 5 例：P1 三例 + P2 
 Android assembleDebug / lintDebug        BUILD SUCCESSFUL
 真机                                     vivo V1936A / Android 9，见上文各项
 ```
+
+---
+
+> ⚠️ **隐私处理（2026-11-01）**：本仓库是**公开仓库**。
+> `01-connect.png` / `06-final-connect.png` 原先直接可见账号类型、**真实姓名**与**工号**，
+> 现已用黑块遮盖（蓝色账号行整段 + 输入框里的工号），标签与界面结构保留。
+> **git 历史里仍保留着未遮盖的原始图片** —— 彻底清除需 `git filter-repo` 重写历史并强推。
