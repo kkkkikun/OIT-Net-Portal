@@ -241,3 +241,75 @@ App/引擎的行为误判成字体问题，然后在字体上做无效改动。
 **教训**：**自动化要按控件文本而不是固定坐标点击**；
 `uiautomator dump` + 按文本匹配 bounds 比硬编码坐标可靠得多
 （本次「拒绝」`[110,2399][591,2554]`、「始终允许」`[628,2399][1109,2554]`）。
+
+## 踩坑：Windows 的 .ps1 必须存成 UTF-8 with BOM（2026-11-01）
+
+**现象**：仓库里的 4 个 `scripts/*.ps1` 带中文，用 **UTF-8 无 BOM** 存盘。
+Windows PowerShell 5.1（用户机器上是 5.1.26100.9711）**按 ANSI(cp936) 解码无 BOM 文件**，
+中文字符的末字节被吃掉、连累后面的引号 → 字符串未闭合 → 语法错误。
+实测 `install_windows.ps1`、`install_windows_tray.ps1`、`uninstall_windows.ps1` 直接解析失败，
+**文档里推荐的托盘安装/卸载方式在中文 Windows 上完全不可用**；
+`build_windows.ps1` 侥幸能跑，但中文提示全是乱码。
+**根因**：PowerShell 只对**带 BOM** 的文件按 UTF-8 解码，无 BOM 一律走系统 ANSI 代码页。
+**教训**：
+1. `.ps1` 一律存 **UTF-8 with BOM**（微软官方约定），不要为了躲这个坑把中文改成英文；
+2. 自查方法：`[System.Management.Automation.Language.Parser]::ParseFile($f,[ref]$null,[ref]$errors)`，
+   比"跑一遍看报不报错"可靠（脚本可能在出错前已经做了一半事）；
+3. **连临时诊断脚本都会踩**：本次自己写的体检脚本没带 BOM，同样解析失败——
+   说明这是"用 WSL 写、Windows 跑"这个工作流的通病，必须写成硬性约定 + pytest 契约。
+   已由 `tests/test_windows_script_encoding.py` 守住。
+
+## 踩坑：PowerShell 的 `$ErrorActionPreference="Stop"` 会把原生命令的 stderr 当成终止错误（2026-11-01）
+
+**现象**：安装脚本第 2 步调用 `oit-portal stop`，该命令在「没有 daemon 在跑」时
+用 `logger.error` 打日志 —— 而 `oit_portal/log.py` 的 `logging.StreamHandler()` 默认写 **stderr**。
+PowerShell 5.1 在 `$ErrorActionPreference="Stop"` 下把**任何**原生命令的 stderr 输出
+都升级成终止错误 → 安装脚本被打断，**托盘根本没启动**。
+**根因**：`$ErrorActionPreference` 管的是 PowerShell 的错误记录，
+但原生可执行文件只要往 stderr 写一行就会被捕获成 `NativeCommandError`。
+**教训**：
+1. 探活/清理这类「尽力而为」的调用，先临时 `$ErrorActionPreference="Continue"`，
+   只看 `$LASTEXITCODE`，不要依赖 stderr 是否为空；
+2. 更根本的修法是让「没有 daemon」这种**正常状态**不要走 `logger.error`
+   （`stop` 已改成幂等返回 0 + INFO，与 `systemctl stop` 对未激活单元返回 0 一致）。
+
+## 踩坑：tkinter 不是 pip 包，缺它时托盘启动即崩（2026-11-01）
+
+**现象**：用户机器上的 Python 3.13 是最小化安装，**连 `tcl` 目录都没有** → `import tkinter` 失败
+→ 托盘 App 启动即崩（退出码 3）；而 `install_windows_tray.ps1` 当时照旧打印
+「完成！请在首次弹出的窗口中输入账号密码。」—— 用户只会等一个永远不弹出的窗口。
+原报错文案是「托盘依赖未安装，请执行 pip install .[tray]」，但 **tkinter 根本不是 pip 包**，
+让用户去 pip install 是把人引向死路。
+**教训**：
+1. 缺 tkinter 的指引必须指向 **Python 安装程序 → Modify → 勾选 tcl/tk and IDLE**，
+   同时给出 `oit-portal configure` 这条不用界面的替代路径；
+2. **任何「启动 GUI」的动作都要在报完成前验证进程真的活着**
+   （`Start-Sleep` + `Get-Process`），否则就是假成功；
+3. 排查方向：`import tkinter` 逐个候选解释器试一遍——用户机器上 4 个 Python 里有 3 个带 tkinter，
+   不一定要逼用户重装。
+
+## 踩坑：`pip install .[tray]` 重装本项目会撞上正在运行的入口 exe（2026-11-01）
+
+**现象**：`build_windows.ps1` 原本先 `pip install ".[tray]" pyinstaller`。
+托盘 App 正从 venv 里运行时，重装会重新生成 `Scripts\oit-portal-tray.exe`，
+该 exe 被 Windows 锁住 → pip 报 `[WinError 5] 拒绝访问` → **构建在第一步就失败**。
+**教训**：构建脚本只装构建期第三方依赖（`pystray pillow pyinstaller`），
+**不重装本项目**；PyInstaller 用 `--paths "$root"` 从源码树导入 `oit_portal` 即可，
+产物 exe 名字（`OIT-Portal.exe`）与入口脚本名（`oit-portal-tray.exe`）也不同，本来就不该互相踩。
+
+## 踩坑：`pip uninstall` 会静默跳过被占用的入口 exe（2026-11-01）
+
+**现象**：卸载后 `site-packages\oit_portal` 包目录没了，但
+`Scripts\oit-portal.exe` / `oit-portal-tray.exe` **还在**，并且 site-packages 里留下
+`~it_portal` / `~it_portal-0.1.0.dist-info` 两个 `~` 前缀的临时目录；
+**pip 全程打印「Successfully uninstalled」，没有任何报错**。
+后果是：用户 PATH 上还能跑到一个指向已删包的旧启动器，
+而 `pip show oit-portal` 已经查不到它（pip 会忽略 `~` 前缀目录）——
+**只靠 `pip show` 做"卸载干净了没有"的验证是假阳性**。
+**教训**：
+1. 卸载脚本要显式清残留：从解释器本身问出 `sysconfig.get_path('scripts')` 和
+   `purelib`，删掉 `oit-portal*.exe` 和 `~it_portal*`；
+2. 验证也要查这两处，而不是只看 `pip show`；
+3. **凡是"报告成功"的脚本，都要有一条独立的核实路径**——
+   安装脚本的「完成！」和卸载脚本的「卸载完成。」原本都是无条件打印的，
+   这类假成功比崩溃更伤人。
