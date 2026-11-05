@@ -152,3 +152,58 @@ Android UI 中的密码 MUST 只短暂存在于 Composition 的 `remember` 状�
 
 - **WHEN** 需要了解某个架构选择的原因
 - **THEN** grep 搜索 openspec/specs/architecture/spec.md 中的关键词
+
+### Requirement: 反馈通道（2026-11-04）
+
+App 反馈 MUST 由自托管收集端承接：Python 侧提供 HTTP 收集端把反馈落盘为本机 JSONL，
+Android 侧 MUST 通过移动端桥接提交，MUST NOT 在客户端内置任何第三方服务的写入凭据。
+
+#### Scenario: 提交反馈
+
+- **WHEN** App 提交一条反馈
+- **THEN** 请求经 `network.create_session()`（trust_env=False）发往用户配置的收集端地址，
+  载荷只含同学填写的正文与脱敏诊断摘要
+
+#### Scenario: 落盘优先于转发
+
+- **WHEN** 收集端配置了飞书 webhook 且转发失败
+- **THEN** 反馈已经落盘，失败只记日志，不影响反馈被收集
+
+#### Scenario: 客户端不持有第三方凭据
+
+- **WHEN** 构建 App 分发给同学
+- **THEN** APK 内不含任何第三方服务的写入令牌；收集端地址是普通配置，可由使用者自行修改
+
+### Requirement: 反馈通道的投递形态与凭据取舍（2026-11-04）
+
+反馈提交端 MUST 支持飞书两类 webhook（群自定义机器人 / 多维表格自动化），
+MUST 按地址形态自动构造对应请求体，MUST 支持对方的凭证校验，
+并 MUST 把「业务码非 0」判定为失败。
+
+#### Scenario: 按形态构造请求体
+
+- **WHEN** 提交目标地址含 `/open-apis/bot/`
+- **THEN** 请求体为 `msg_type` + `content.text`；否则（其它飞书地址）为扁平 JSON，键名即列名
+
+#### Scenario: 携带通道凭证
+
+- **WHEN** 配置了通道凭证
+- **THEN** 群机器人请求体附带 `timestamp` 与 `sign`（HMAC-SHA256 后 Base64），
+  多维表格请求附带 `Authorization: Bearer` 请求头
+
+#### Scenario: 业务级失败如实上报
+
+- **WHEN** 通道返回 HTTP 200 但响应体 `code` 非 0
+- **THEN** 提交被判定为失败，且失败信息不回显同学原文
+
+#### Scenario: 凭据危害等级的选择
+
+> 决策记录：飞书 webhook 地址随 APK 分发、可被提取，这是客户端直发第三方的固有代价。
+> 选择该方案而非 GitHub token 的理由是**危害等级**：
+> webhook 泄露的后果上限是「能往一张表/一个群写内容」，
+> 而仓库 token 泄露等于交出代码修改权。
+> 缓解手段是**强制在飞书侧开启校验**（签名校验 / 凭证校验 / 关键词校验），
+> 因此客户端 MUST 支持携带凭证 —— 这不是疏漏，是必需的防线。
+
+- **WHEN** 交付直发第三方的能力
+- **THEN** 文档 MUST 写明地址可被提取的风险、必须在对方开启校验、以及两者的危害等级差异

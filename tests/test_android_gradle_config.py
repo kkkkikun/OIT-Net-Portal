@@ -1,5 +1,6 @@
 """Android Gradle 配置不变量的离线静态回归测试。"""
 
+import re
 from pathlib import Path
 
 
@@ -49,6 +50,20 @@ def test_no_literal_placeholder_path_remains():
 
 
 def test_repository_is_not_used_as_broad_python_sourceset():
-    assert "sourceSets" not in APP_GRADLE
+    """不能把仓库根目录整体当 sourceset。
+
+    注意：这条约束针对的是 **Python** sourceset —— 之前 `srcDir("..")` 会让 Gradle
+    扫描整个仓库（含 build 产物与 .git）。Java/Kotlin 侧允许指向 **build 目录下的
+    生成产物**（本项目用它注入构建期配置），只要不是仓库根目录。
+    """
     assert "python.srcDir" not in APP_GRADLE
     assert 'srcDir("..")' not in APP_GRADLE
+    assert "srcDir(rootProject.projectDir" not in APP_GRADLE
+    assert "srcDir(rootProject.projectDir.parentFile)" not in APP_GRADLE
+    # 唯一允许的 srcDir 指向 build 目录下的生成产物
+    src_dirs = re.findall(r"java\.srcDir\(([^)]+)\)", APP_GRADLE)
+    assert src_dirs, "预期存在生成源码目录的注册"
+    for expression in src_dirs:
+        assert "buildDirectory" in expression, (
+            f"srcDir 只能指向 build 目录下的生成产物，实际是 {expression}"
+        )

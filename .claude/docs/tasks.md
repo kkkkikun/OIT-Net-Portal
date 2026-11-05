@@ -1,6 +1,6 @@
 # tasks.md — 全局任务追踪
 
-> 最后更新: 2026-11-01
+> 最后更新: 2026-11-05
 > 与 openspec/changes/ 的关系: 大改动走 `/opsx:propose` 生成 change 提案（openspec/changes/<name>/）；这里只记跨 change 的长期事项与日常待办。
 
 ## 进行中
@@ -27,6 +27,45 @@
 - [x] 网络恢复回调（2026-10-21）
 - [x] 首次编译 → APK 构建（2026-10-21，无 Wrapper，用本机 Gradle 8.9 + 命令行代理参数）
 - [x] 第二轮真机验收全部通过（2026-10-21）：首次登录直接显示在线、Wi-Fi 断开置离线、恢复后自动刷新、重试登录、结束会话后网络事件不触发重登、重新登录
+
+## 进行中
+
+### App 内嵌快速反馈通道（change `add-app-feedback-channel`）
+
+- [x] OpenSpec 提案 + 设计说明 + Delta Spec（`openspec/changes/add-app-feedback-channel/`）
+- [x] Python 侧：`oit_portal/feedback.py`（载荷构造 / 脱敏摘要 / JSONL 存储 / HTTP 收集端 / 飞书可选转发 / 客户端提交）
+- [x] Python 侧：`oit_portal/mobile_feedback.py`（移动端反馈桥接，与认证桥接同等级别脱敏）
+- [x] CLI：`oit-portal feedback serve|list|export`
+- [x] Android 侧：`FeedbackBridge` 契约 + Chaquopy 实现 + `FeedbackSettingsStore`（收集端地址）
+- [x] Android 侧：`FeedbackForm` 原生表单 + 设置页「意见反馈」卡片 + ViewModel 接线（脱敏诊断摘要）
+- [x] 验证：pytest 403 passed / Android 单测 73 例 / assembleDebug / lintDebug 全绿 + 端到端联调
+- [ ] **真机验收**（待 ADB 设备）：同学端提交 → 飞书表格里看到
+- [x] **通道地址与凭证已配置**（2026-11-05）：真实地址与 token 已写入 `android/local.properties`（已 gitignore），实测提交返回 `code:0`，APK 已用真实配置重建
+- [ ] **⚠️ 分发前必须在飞书侧开启「凭证校验」**：实测不带 `Authorization` 头也能 `code:0` 通过 → 当前地址泄露即可写入。开启后用 `curl` 不带 token POST 一次，应返回非 0 code
+- [x] **改为飞书直发（2026-11-04）**：用户不想一直开着电脑上的端口服务 → 提交目标改为飞书 webhook；按地址形态自动分流群机器人 / 多维表格两种请求体；支持群机器人签名校验与多维表格 Bearer 凭证；补上「飞书 HTTP 200 但 `code != 0` 也算失败」的判定；自托管收集端保留为备选路径
+
+### 反馈通道迁移到 OpenFeedback（change `2026-11-05-switch-feedback-to-openfeedback`）
+
+目标：把反馈从「飞书直发」换成自托管的 **OpenFeedback** 统一服务（公开仓库 `kkkkikun/OpenFeedback`），
+拿到统一后台 + 截图 + 断网不丢 + APK 无凭据。改动面刻意压到最小：保留本 App 自己的表单与
+`FeedbackBridge` 边界，只换桥接实现。
+
+- [x] OpenSpec 提案 + 设计说明 + Delta Spec（`openspec/changes/2026-11-05-switch-feedback-to-openfeedback/`）
+- [x] Android 侧：新增 `core/OpenFeedbackBridge.kt`（实现既有 `FeedbackBridge` 边界，走 SDK core，不碰 Chaquopy）
+- [x] Android 侧：改 `core/FeedbackSettingsStore.kt`（`collectorEndpoint` + `collectorSecret` → `serviceEndpoint`，不再需要凭证字段）
+- [x] Android 侧：改 `MainActivity.kt`（桥接换成 `OpenFeedbackBridge.create(...)`）
+- [x] Android 侧：改 `ui/FeedbackForm.kt`（分类扩为 bug/feature/experience/other；文案改为「发到作者的 OpenFeedback 后台…断网时会先存在手机里，联网后自动补发」）
+- [x] 构建配置：`app/build.gradle.kts` 加 `openfeedback-core:0.1.0` 依赖；`generateFeedbackConfig` **只注入地址、不注入凭证**
+- [x] 构建配置：`settings.gradle.kts` 加 openfeedback Maven 仓库，URL 由 `oit.openfeedback.mavenUrl` 属性决定（可指向 `file://` 本地目录做离线构建）
+- [x] 测试：新增 `FeedbackCategoryMappingTest`（4 例）+ 改 `PortalFeedbackViewModelTest` 断言新分类；Android 单测 73→**77**
+- [x] 文档重写 `docs/app-feedback.md`（改为 OpenFeedback 配置步骤 + 断网补发说明 + 安全边界对比 + 回滚方案）
+- [x] 同步 SNAPSHOT / tasks / CHANGELOG
+- [x] 验证：`./gradlew testDebugUnitTest assembleDebug lintDebug` 全绿（**77 例 Android 单测全过，0 失败**；已核对 APK dex 内含 `openfeedback-core` 的 `FeedbackApiClient` / `FeedbackQueue` / `FeedbackUploadWorker`，且**旧飞书 webhook 与 token 在 dex 里 0 处残留**）
+- [x] 本机 `android/local.properties` 已改为 `oit.feedback.endpoint=https://8.160.116.34`，并**删除不再被读取的 `oit.feedback.secret`**
+- [ ] **真机闭环验收**（待 ADB 设备 + 公网 HTTPS）：同学端提交 → OpenFeedback 后台出现记录
+- [ ] **真机闭环验收**：断网提交 → 恢复网络 → 自动补发 → 后台**无重复记录**
+- [ ] 公网 HTTPS：阿里云安全组需放行入站 TCP 80/443，Let's Encrypt 才能签发 IP 证书（**这是当前唯一阻塞项**；实测除 SSH 的 55971 外，80/443 在公网均不可达）
+- [x] `oit.feedback.secret` 已不再被任何代码读取，已从本机配置里删掉（旧飞书 webhook token）
 
 ## 待办
 

@@ -1,6 +1,6 @@
 # SNAPSHOT.md — 项目状态快照
 
-> 最后更新: 2026-11-01 | 验证: pytest 337 passed (无网络) + Android testDebugUnitTest 61 例 + clean assembleDebug/lintDebug + vivo V1936A 真机复现验收（2026-10-31）+ 红米 K50 Ultra / Android 15 通知权限路径验收（2026-11-01）+ Windows 端 PC 侧全链路实测（2026-11-01）+ GitHub Actions 三 job 全绿（run 41307746362，2026-11-01）
+> 最后更新: 2026-11-05 | 验证: pytest 435 passed (无网络) + Android testDebugUnitTest **77 例全绿**（含 `FeedbackCategoryMappingTest` 4 例分类映射；`assembleDebug` + `lintDebug` 同批通过）+ **反馈通道已迁移到 OpenFeedback**（change `2026-11-05-switch-feedback-to-openfeedback`；已核对 APK dex 内含 SDK 的 `FeedbackApiClient`/`FeedbackQueue`/`FeedbackUploadWorker`，旧飞书 webhook 与 token **0 处残留**，待真机闭环验收）+ vivo V1936A 真机复现验收（2026-10-31）+ 红米 K50 Ultra / Android 15 通知权限路径验收（2026-11-01）+ Windows 端 PC 侧全链路实测（2026-11-01）+ GitHub Actions 三 job 全绿（run 41307746362，2026-11-01）
 
 ## 项目概览
 
@@ -18,7 +18,7 @@
 |---|---|
 | 语言 | Python 3.9+ |
 | 依赖 | requests, pycryptodome (可选 AES), tomli (<3.11) |
-| 测试 | pytest，337 用例全部无网络（FakeSession + fixture 状态机 + Android/Windows 托盘/Windows 脚本/Linux 打包/CI workflow 静态契约测试）；Android 另有 61 例 JUnit 单测 |
+| 测试 | pytest，435 用例全部无网络（FakeSession + fixture 状态机 + Android/Windows 托盘/Windows 脚本/Linux 打包/CI workflow/反馈通道 静态契约测试）；Android 另有 77 例 JUnit 单测 |
 | 打包 | pyproject.toml + setuptools，console_scripts: oit-portal；Linux 离线包 `scripts/build_linux.sh`（wheelhouse tar.gz + SHA256）；Windows PyInstaller exe |
 | 格式化 | 无强制工具，遵循现有代码风格 |
 
@@ -38,7 +38,7 @@
 
 ```
 oit_portal/
-├── cli.py                  # CLI 入口: status/once/daemon/stop/login-info/capture/configure
+├── cli.py                  # CLI 入口: status/once/daemon/stop/login-info/capture/configure/feedback
 ├── capture.py              # 抓包向导（_HEURISTIC_ENDPOINTS 等 fallback 常量）
 ├── discover.py             # 入口链路发现（302 / meta refresh / JS 三跳）
 ├── probe.py                # 三态探测 online/captive/offline，多探测点双确认
@@ -48,6 +48,8 @@ oit_portal/
 ├── protocol_overrides.py   # protocol.json 合并进 CAPTURED（仅替换已有键）
 ├── network.py              # 统一认证 Session：trust_env=False + 可选物理网卡绑定（VPN 分流）
 ├── mobile_bridge.py        # 路线B 移动端桥接（脱敏探测/单次登录，无 capture/daemon）
+├── feedback.py             # App 反馈通道：载荷构造/JSONL 存储/HTTP 收集端/飞书可选转发
+├── mobile_feedback.py      # 路线B 反馈桥接（提交一条反馈，无凭据、无 capture/daemon）
 ├── mobile_sso.py           # 移动端首装 SSO 适配器（不读 protocol.json，fail-closed 加密）
 ├── tray.py                 # Windows 托盘 App（账号设置含 VPN 直连开关、状态菜单、后台线程）
 ├── config.py / log.py / paths.py
@@ -97,7 +99,11 @@ openspec/                   # OpenSpec 规范体系（specs/ + changes/）
 - **Windows 端 PC 侧全链路实测与修复（2026-11-01）**: 在用户自己的中文 Windows（PowerShell 5.1.26100.9711）上跑完「安装 → 托盘启动 → 独立 exe → 卸载」全链路，暴露并修掉 4 个真缺陷：①4 个 `.ps1` 是 UTF-8 无 BOM + 含中文 → PS 5.1 按 ANSI 解码吞掉引号 → **语法错误，文档推荐的托盘安装/卸载方式在中文 Windows 上完全不可用**；②`stop` 在无 daemon 时打 ERROR 到 stderr → PS 把 stderr 当终止错误 → 安装脚本在第 2 步被打断、**托盘根本没启动**；③缺 tkinter 时只提示 `pip install .[tray]`（tkinter 不是 pip 包，等于死路），且安装脚本托盘启动即崩仍照报「完成！」；④`build_windows.ps1` 重装本项目撞上被占用的入口 exe（WinError 5）、`uninstall_windows.ps1` 用 PATH 上的 `python`/`oit-portal`（venv 场景下都不存在）却照报「卸载完成」。修复后：4 个脚本 PS 解析全 OK、托盘安装 4 步带存活校验、`stop` 幂等返回 0、卸载会核实包/自启项/入口 exe/`~` 临时目录是否真清干净、独立 exe（自包含）正常弹窗。pytest 309→**324**
 - **验收截图的账号信息已遮盖并重写历史（2026-11-01）**: 本仓库是**公开仓库**（`kkkkikun/OIT-Net-Portal`，`visibility=PUBLIC`）。三个验收目录的截图里原本可见**学号**，最早的 `2026-10-27-background-reconnect` 那批还可见**真实姓名 + 工号**（教师账号）。处置分两步：①用新提交遮盖全部截图（红米 8 张 / 17 处黑块，vivo 3 张 / 6 处黑块），标签与界面结构保留；②对**唯一真正公开过未遮盖原图的** `00_screen_state.png` 用 `git filter-repo --blob-callback` 重写历史并强推 `android-app`（`40a9d72 → e484110`，所有提交 SHA 都变了）。**核验：全新克隆里该文件在所有历史提交中都只有遮盖版，旧 blob 不在对象库中**。残留边界：GitHub 自身在 GC 前仍可按旧 SHA 临时取到不可达对象
 - **v1.0.0 发布与 GitHub Actions 落地（2026-11-01）**: `android-app` 纯快进合并进 `main`（`ffa69aa..a06b8a2`），两条分支现已同步；版本号 `pyproject` → 1.0.0、Android `versionName` 1.0.0 / `versionCode` 2；新增 `CHANGELOG.md`、README 徽章（294→337）+ Gradle Wrapper 8.9 入库；`.github/workflows/ci.yml`（python / android / windows-exe 三 job）+ `release.yml`（打 v* 标签即构建 APK + exe 并挂到 Release）。**首轮 CI 全红，修了 5 个真问题**：①pytest ≥9.2 会把 `LogCaptureHandler` 挂到 `propagate=False` 的 logger 上 → `setup_logging` 的 `if logger.handlers` 幂等判据误判 → 日志文件从未创建（本地 pytest 9.0.3 无此行为，**本地绿、CI 红**）→ 改用自有 handler 标记；②`build_windows.ps1` 此前只装 pystray/pillow/pyinstaller → 托盘模块 import requests 失败 → 更正为「先停运行中的托盘再正常装 `.[tray]`」；③`android-actions/setup-android` 会去装早已下架的 `tools` 包 → 改用 runner 预装 SDK + `yes | sdkmanager --licenses`；④Chaquopy 要求构建机 Python 与 App 内嵌版本一致（3.10），CI 装的却是 runner 自带的 3.12 → Android job 补装 Python 3.10；⑤发版说明的 awk 用 `"^## \["` 正则匹配标题，实测一行都匹配不到 → 改用 `index()`。**第三轮 CI 三 job 全绿（run 41307746362）**。发版后又补了 3 处真问题：⑥`pyproject.toml` 已是 1.0.0 但 `oit_portal/__init__.py` 还写着 `__version__ = "0.1.0"` → `oit-portal --version` 对外报 0.1.0（正式版里的假版本号）→ 改为以包元数据为准 + `tests/test_version.py` 3 例守住；⑦`install_windows_tray.ps1` 有和构建脚本同一个坑（托盘在跑时重装撞 WinError 5）→ 补「先停托盘」；⑧校内网拉不到 pypi 的 setuptools 导致 `pip install` 失败 → 加 `--no-build-isolation` 离线兜底。tag `v1.0.0` 最终指向 `e04c193`（含全部修复），Release 页面已挂 APK + exe
-- **已归档 change**: android-ui-refresh（2026-10-27）、android-background-auto-reconnect（2026-10-27）
+- **App 内嵌快速反馈通道（2026-11-04）**: 给分发给同学的 App 加了**完全内嵌**的反馈入口——设置页底部「意见反馈」卡片 → App 内原生 Compose 表单（类型 / 内容 / 是否附带脱敏诊断摘要），**不跳浏览器、不用问卷链接**。收集端自托管：`oit-portal feedback serve`（默认仅监听回环，`--host 0.0.0.0` 才对外）把反馈按 JSONL 落盘到本机，`oit-portal feedback list` / `export` 集中看与导出 Markdown 清单；**可选**配 `--feishu-webhook` 同步一份到飞书（群机器人发文本 / 多维表格发扁平 JSON），**落盘优先、转发其次**，飞书抖动不会丢反馈。安全边界：反馈载荷只有同学主动填写的文字 + 脱敏摘要，账号/密码/Cookie/完整 URL 所在行**整行丢弃**；提交走 `network.create_session()`（trust_env=False）；收集端无鉴权，只适合可信内网。pytest 338→**403**，Android 单测 61→**73**，端到端联调（真收集端 + App 侧同款桥接 + list/export）通过
+- **反馈通道改为飞书直发（2026-11-04）**: 用户明确不想一直开着电脑上的一个端口服务，因此把提交目标从「作者机器上的自托管收集端」改成**飞书 webhook**（云端常驻，作者不占机器）。App 里的地址按形态自动分流：含 `/open-apis/bot/` 的走群机器人（`msg_type` + `content.text`），其它飞书地址走**多维表格扁平 JSON**（键名即表格列名，载荷新增 `category_label` 中文分类与 `submitted_at` 便于建单选列与时间列）。**支持飞书凭证校验**：群机器人签名校验（`timestamp` + `sign`，HMAC-SHA256 后 Base64）与多维表格 Bearer（`Authorization` 头）——因为 webhook 地址会随 APK 分发可被提取，**飞书侧必须开校验**才是有效防线。另外补了一个真坑：飞书即使 HTTP 200 也可能返回 `code != 0`（关键词不匹配、IP 不在白名单），只看状态码会把失败当成功 → 提交层现在检查业务码。自托管收集端**保留**（先审后收 / 完全离线时用）。**反馈通道地址与凭证改为构建期注入**（`android/local.properties` 的 `oit.feedback.endpoint` / `oit.feedback.secret` → Gradle 生成 `BuildConfigFeedback`）：本仓库是公开仓库，真实 webhook 地址与密钥只留在构建者本机，不进版本控制（已验证：APK dex 里有注入值、`git grep` 在入库文件里查不到）。pytest 403→**429**
+- **反馈通道已接上真实飞书多维表格（2026-11-05）**: 用户提供了真实 webhook 地址与 token，已写入 `android/local.properties`（已 gitignore）并用 App 侧同款代码**实测提交成功**（飞书返回 `code:0`），APK 用真实配置重建完成（dex 内含地址与凭据，`git grep` 确认未入库）。**实测发现飞书侧「凭证校验」尚未开启** —— 不带 `Authorization` 头 POST 同样返回 `code:0`，即当前地址泄露即可写入；已在 `docs/app-feedback.md` 给出 curl 自查方法，**分发前必须去飞书把凭证校验打开**。
+- **反馈通道迁移到 OpenFeedback（2026-11-05，change `2026-11-05-switch-feedback-to-openfeedback`）**: 飞书直发有四个绕不开的问题——数据只进表格没有统一后台、没有截图、断网即丢、webhook 地址本身就是写入凭据。改为接入 **OpenFeedback**（独立、轻量、可自托管的多应用统一反馈服务，公开仓库 `kkkkikun/OpenFeedback`）：同一个服务端 + 同一个后台，按 `appId` 区分应用。**改动面刻意压到最小**——保留本 App 自己的 Compose 表单与 `FeedbackBridge` 边界，只把桥接实现从「Chaquopy → Python → requests → 飞书」换成「SDK core → HttpURLConnection → OpenFeedback」，表单 UI 与交互不变。三个实质性收益：①**断网不丢**——反馈存本机队列，联网后由 WorkManager 自动补发，且带 `submissionId` 由服务端去重，**补发不会产生重复记录**；②**APK 里不再有任何服务端凭据**——只剩公开的 `appId` 与服务地址（旧方案的飞书 token 已不再被读取，可从 `local.properties` 删除）；③**服务端再校验一遍**——限流（每 appId+IP 每小时 10 条）、字段合法性、附件魔数与数量/大小限制都不信任客户端。新增依赖 `com.kkkkikun.openfeedback:openfeedback-core:0.1.0`（用框架自带 `HttpURLConnection`，**不给宿主引入 OkHttp/Retrofit**，依赖树不变）；SDK 仓库地址经 Gradle 属性 `oit.openfeedback.mavenUrl` 注入（默认 `https://feedback.example.com/maven/`），可指向本地 `file://` 目录做离线构建。反馈类型从三类扩到四类（问题/功能建议/体验问题/其他），服务端兼容旧分类 `issue`/`suggestion`/`ux`/`problem`，**回退安全**。Python 侧 `oit_portal/feedback.py` / `mobile_feedback.py` **保留但 Android 不再调用**（CLI 自托管收集端 `oit-portal feedback serve|list|export` 仍可用）。回滚是单点替换：把注入的桥接换回 `ChaquopyFeedbackBridge` 即可恢复飞书直发，不用回滚服务端也不用动表单 UI。Android 单测 73→**77**（新增 `FeedbackCategoryMappingTest` 4 例，并改 `PortalFeedbackViewModelTest` 断言新分类）
+- **已归档 change**: android-ui-refresh（2026-10-27）、android-background-auto-reconnect（2026-10-27）、add-app-feedback-channel（2026-11-04）、switch-feedback-to-feishu-direct（2026-11-04）
 
 ## 安全红线（改代码前自查）
 

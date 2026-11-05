@@ -13,6 +13,8 @@ import com.oitnetportal.core.BackgroundReconnectStatus
 import com.oitnetportal.core.BackgroundServiceRuntime
 import com.oitnetportal.core.ChaquopyPortalCoreBridge
 import com.oitnetportal.core.CoreUnavailableException
+import com.oitnetportal.core.FeedbackBridge
+import com.oitnetportal.core.FeedbackUnavailableException
 import com.oitnetportal.core.LoginOutcome
 import com.oitnetportal.core.LoginResult
 import com.oitnetportal.core.NotificationStatusProvider
@@ -50,6 +52,48 @@ data class PrefillCredentials(
     val saveAccount: Boolean,
 )
 
+/**
+ * 把诊断事件压成可外发的脱敏摘要。
+ *
+ * 只保留状态类事件：含 URL、凭据线索或账号字样的行整行丢弃，
+ * 避免「这里原来有个账号」的痕迹留在摘要里。
+ */
+fun sanitizeDiagnostics(events: List<String>): String {
+    val kept = events
+        .asSequence()
+        .map { it.trim() }
+        .filter { it.isNotEmpty() }
+        .filterNot { line -> SENSITIVE_DIAGNOSTIC_PATTERNS.any { pattern -> pattern.containsMatchIn(line) } }
+        .filter { line -> ALLOWED_DIAGNOSTIC_PREFIXES.any { prefix -> line.contains(prefix) } }
+        .take(MAX_DIAGNOSTIC_LINES)
+        .map { line -> line.take(MAX_DIAGNOSTIC_LINE_LENGTH) }
+        .toList()
+    return kept.joinToString("\n")
+}
+
+/** 命中任一即整行丢弃：疑似凭据、账号或完整 URL。 */
+private val SENSITIVE_DIAGNOSTIC_PATTERNS = listOf(
+    Regex("https?://", RegexOption.IGNORE_CASE),
+    Regex("\\b(token|password|passwd|cookie|session|secret|authorization)\\b", RegexOption.IGNORE_CASE),
+    Regex("(账号|密码|Cookie|口令|学号|工号)"),
+)
+
+/** 允许保留的状态类事件关键词。 */
+private val ALLOWED_DIAGNOSTIC_PREFIXES = listOf(
+    "手动刷新",
+    "登录结果",
+    "网络恢复",
+    "网络连接已断开",
+    "Python 核心桥接已就绪",
+    "应用已启动",
+    "系统通知",
+    "检测到",
+    "后台服务已停止",
+)
+
+private const val MAX_DIAGNOSTIC_LINES = 10
+private const val MAX_DIAGNOSTIC_LINE_LENGTH = 200
+
 data class PortalUiState(
     val coreAvailable: Boolean,
     val status: PortalStatus = PortalStatus.UNKNOWN,
@@ -71,6 +115,12 @@ data class PortalUiState(
     val wifiAutoMatchAvailable: Boolean = false,
     /** 系统是否允许本应用发通知；厂商 ROM 默认禁用时后台提醒会静默失效。 */
     val notificationsEnabled: Boolean = true,
+    /** 反馈是否正在提交。 */
+    val isSubmittingFeedback: Boolean = false,
+    /** 本次提交失败的原因；null 表示没有失败待展示。 */
+    val feedbackError: String? = null,
+    /** 最近一次反馈是否提交成功。 */
+    val feedbackSubmitted: Boolean = false,
 )
 
 class PortalViewModel(
@@ -82,6 +132,7 @@ class PortalViewModel(
     private val backgroundStateStore: BackgroundReconnectStateStore? = null,
     private val backgroundLauncher: BackgroundReconnectLauncher? = null,
     private val notificationStatusProvider: NotificationStatusProvider? = null,
+    private val feedbackBridge: FeedbackBridge? = null,
 ) : ViewModel() {
     private var core: PortalCoreBridge = initialCore
     private val operationMutex = Mutex()
@@ -557,6 +608,52 @@ class PortalViewModel(
         _uiState.update { it.copy(events = (listOf(stamped) + it.events).take(MAX_EVENTS)) }
     }
 
+    // ── 反馈 ────────────────────────────────────────────────
+
+    /**
+     * 提交一条反馈。
+     *
+     * 诊断摘要在本地脱敏后才交给桥接：只保留状态类事件，
+     * 账号、凭据线索与完整 URL 所在行整行丢弃。
+     */
+    fun submitFeedback(category: FeedbackCategory, content: String, withDiagnostics: Boolean) {
+        if (disposed || _uiState.value.isSubmittingFeedback) return
+        val bridge = feedbackBridge
+        if (bridge == null || !bridge.isAvailable) {
+            _uiState.update { it.copy(feedbackError = "反馈通道尚未配置，无法提交。") }
+            return
+        }
+        val trimmed = content.trim()
+        if (trimmed.isEmpty()) {
+            _uiState.update { it.copy(feedbackError = "内容不能为空。") }
+            return
+        }
+        val diagnostics = if (withDiagnostics) {
+            sanitizeDiagnostics(_uiState.value.events)
+        } else {
+            null
+        }
+
+        viewModelScope.launch {
+            _uiState.update {
+                it.copy(isSubmittingFeedback = true, feedbackError = null, feedbackSubmitted = false)
+            }
+            try {
+                bridge.submit(category.wireValue, trimmed, diagnostics)
+                _uiState.update { it.copy(feedbackSubmitted = true) }
+                recordEvent("已提交一条反馈")
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: FeedbackUnavailableException) {
+                _uiState.update { it.copy(feedbackError = "反馈通道尚未配置，无法提交。") }
+            } catch (_: Exception) {
+                _uiState.update { it.copy(feedbackError = "反馈提交失败，请稍后重试。") }
+            } finally {
+                _uiState.update { it.copy(isSubmittingFeedback = false) }
+            }
+        }
+    }
+
     private fun runOperation(operation: suspend () -> Unit) {
         if (disposed || _uiState.value.isBusy) return
 
@@ -620,11 +717,13 @@ class PortalViewModel(
             backgroundStateStore: BackgroundReconnectStateStore? = null,
             backgroundLauncher: BackgroundReconnectLauncher? = null,
             notificationStatusProvider: NotificationStatusProvider? = null,
+            feedbackBridge: FeedbackBridge? = null,
         ) = viewModelFactory {
             initializer {
                 PortalViewModel(
                     core, bridgeFactory, accountStore, settingsStore, wifiIdentity,
                     backgroundStateStore, backgroundLauncher, notificationStatusProvider,
+                    feedbackBridge,
                 )
             }
         }

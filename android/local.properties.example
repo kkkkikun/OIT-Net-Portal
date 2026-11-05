@@ -1,0 +1,14 @@
+# 本机构建配置（复制为 local.properties 后填写；local.properties 已被 .gitignore 忽略）
+#
+# Android SDK 位置（Gradle 也可能自动探测，但显式写更稳）
+# 改成你自己的 SDK 路径（Windows 常见：C:\\Users\\<你>\\AppData\\Local\\Android\\Sdk）
+sdk.dir=/home/your-user/Android/Sdk
+
+# 反馈通道：OpenFeedback 服务地址。
+#
+# 这个地址会在构建期注入进 APK。OpenFeedback 的提交接口不需要任何客户端密钥，
+# 所以这里没有 secret 一项 —— APK 里只有公开的 appId 和这个服务地址。
+#
+# 地址来自 OpenFeedback 部署时配置的 OF_PUBLIC_HOST，例如：
+#   oit.feedback.endpoint=https://feedback.example.com
+oit.feedback.endpoint=

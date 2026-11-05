@@ -83,6 +83,9 @@ fun PortalApp(viewModel: PortalViewModel) {
                     )
                 }
             },
+            onSubmitFeedback = { category, content, withDiagnostics ->
+                viewModel.submitFeedback(category, content, withDiagnostics)
+            },
         )
     }
 }
@@ -102,8 +105,10 @@ fun PortalScreen(
     onUpdateAccountMeta: (String, String, String) -> Unit = { _, _, _ -> },
     onRequestWifiPermission: () -> Unit = {},
     onOpenNotificationSettings: () -> Unit = {},
+    onSubmitFeedback: (FeedbackCategory, String, Boolean) -> Unit = { _, _, _ -> },
 ) {
     var showAccountManager by remember { mutableStateOf(false) }
+    var showFeedbackForm by remember { mutableStateOf(false) }
     var selectedTab by remember { mutableIntStateOf(0) }
     if (showAccountManager) {
         AccountManagementDialog(
@@ -113,6 +118,19 @@ fun PortalScreen(
             onUpdateMeta = onUpdateAccountMeta,
             onDelete = onDeleteAccount,
             onDismiss = { showAccountManager = false },
+        )
+    }
+    if (showFeedbackForm) {
+        // 提交成功后自动收起表单，让设置页给出「已收到」的结果反馈。
+        LaunchedEffect(state.feedbackSubmitted) {
+            if (state.feedbackSubmitted) showFeedbackForm = false
+        }
+        FeedbackForm(
+            isSubmitting = state.isSubmittingFeedback,
+            onSubmit = { category, content, withDiagnostics ->
+                onSubmitFeedback(category, content, withDiagnostics)
+            },
+            onDismiss = { showFeedbackForm = false },
         )
     }
     Scaffold(
@@ -140,6 +158,7 @@ fun PortalScreen(
                 onToggleForegroundRefresh, onToggleBackgroundReconnect,
                 { showAccountManager = true }, onEndSession,
                 onOpenNotificationSettings,
+                { showFeedbackForm = true },
             )
             PortalTab.DIAGNOSTICS -> DiagnosticsPage(state, Modifier.padding(padding))
         }
@@ -233,6 +252,7 @@ private fun SettingsPage(
     onManageAccounts: () -> Unit,
     onEndSession: () -> Unit,
     onOpenNotificationSettings: () -> Unit,
+    onOpenFeedback: () -> Unit,
 ) {
     Column(
         modifier.fillMaxSize().verticalScroll(rememberScrollState())
@@ -324,6 +344,33 @@ private fun SettingsPage(
                         onClick = onOpenNotificationSettings,
                         modifier = Modifier.fillMaxWidth(),
                     ) { Text("打开通知设置") }
+                }
+            }
+        }
+        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("意见反馈", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Text(
+                    "遇到问题或者有想法，直接在这里告诉作者；不用另外打开网页或加群。",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedButton(
+                    onClick = onOpenFeedback,
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                ) { Text("写一条反馈") }
+                state.feedbackError?.let {
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+                if (state.feedbackSubmitted) {
+                    Text(
+                        "反馈已收到，谢谢你的建议。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
         }
