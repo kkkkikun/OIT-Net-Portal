@@ -48,6 +48,25 @@ def _build_parser() -> argparse.ArgumentParser:
     sub.add_parser("login-info", help="打印人工登录引导（触发 URL 等）")
     sub.add_parser("capture", help="一键抓包向导：自动发现登录协议并自配置（校内未登录状态运行）")
     sub.add_parser("configure", help="交互式设置或更新校园网账号密码")
+
+    feedback = sub.add_parser(
+        "feedback",
+        help="App 反馈通道：起收集端 / 看已收集的反馈 / 导出清单",
+    )
+    feedback_sub = feedback.add_subparsers(dest="feedback_command", required=True)
+
+    feedback_serve = feedback_sub.add_parser("serve", help="启动反馈收集端")
+    feedback_serve.add_argument("--host", default="127.0.0.1", help="监听地址（默认仅本机）")
+    feedback_serve.add_argument("--port", type=int, default=8787, help="监听端口")
+    feedback_serve.add_argument("--store", type=Path, default=None, help="反馈落盘文件路径")
+    feedback_serve.add_argument("--feishu-webhook", default="", help="可选：飞书 webhook 地址")
+
+    feedback_list = feedback_sub.add_parser("list", help="列出已收集的反馈")
+    feedback_list.add_argument("--store", type=Path, default=None, help="反馈落盘文件路径")
+
+    feedback_export = feedback_sub.add_parser("export", help="把反馈导出成 Markdown 清单")
+    feedback_export.add_argument("--store", type=Path, default=None, help="反馈落盘文件路径")
+    feedback_export.add_argument("--output", type=Path, default=None, help="导出文件路径（默认打印到屏幕）")
     return parser
 
 
@@ -108,6 +127,95 @@ def cmd_configure(cfg: Config, paths: AppPaths) -> int:
     return EXIT_OK
 
 
+def _feedback_store_path(paths: AppPaths, override: Path | None) -> Path:
+    """反馈落盘文件路径：显式参数优先，其次用户目录下的 feedback.jsonl。"""
+    if override is not None:
+        return override
+    return paths.home / "feedback.jsonl"
+
+
+def cmd_feedback(cfg: Config, paths: AppPaths, args: argparse.Namespace) -> int:
+    """App 反馈通道：起收集端 / 看已收集的反馈 / 导出清单。"""
+    from .feedback import (
+        FeedbackCollector,
+        FeedbackCollectorConfig,
+        export_feedback_markdown,
+        format_feedback_listing,
+        list_feedback_records,
+    )
+
+    command = args.feedback_command
+    if command == "serve":
+        return _cmd_feedback_serve(cfg, paths, args, FeedbackCollector, FeedbackCollectorConfig)
+    if command == "list":
+        store_path = _feedback_store_path(paths, args.store)
+        print(format_feedback_listing(list_feedback_records(store_path)))
+        return EXIT_OK
+    if command == "export":
+        store_path = _feedback_store_path(paths, args.store)
+        markdown = export_feedback_markdown(list_feedback_records(store_path))
+        output = args.output
+        if output is None:
+            print(markdown)
+            return EXIT_OK
+        try:
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text(markdown, encoding="utf-8")
+        except OSError as exc:
+            print(f"导出失败：{exc}", file=sys.stderr)
+            return EXIT_ERROR
+        print(f"已导出 {output}")
+        return EXIT_OK
+    print("未知的反馈子命令。", file=sys.stderr)
+    return EXIT_ERROR
+
+
+def _cmd_feedback_serve(
+    cfg: Config,
+    paths: AppPaths,
+    args: argparse.Namespace,
+    collector_cls,
+    config_cls,
+) -> int:
+    """启动反馈收集端。"""
+    from .network import create_session
+
+    host = (args.host or "").strip()
+    if not host:
+        print("监听地址不能为空。", file=sys.stderr)
+        return EXIT_ERROR
+    port = args.port
+    if not (1 <= int(port) <= 65535):
+        print("端口必须是 1-65535 之间的整数。", file=sys.stderr)
+        return EXIT_ERROR
+
+    store_path = _feedback_store_path(paths, args.store)
+    config = config_cls(
+        host=host,
+        port=int(port),
+        feishu_webhook_url=(args.feishu_webhook or "").strip(),
+    )
+    collector = collector_cls(
+        config=config,
+        store_path=store_path,
+        session_factory=lambda: create_session(cfg),
+    )
+    print(f"反馈收集端已启动：http://{host}:{collector.port}/feedback")
+    print(f"反馈落盘：{store_path}")
+    if config.feishu_webhook_url:
+        print("已配置飞书 webhook：每条反馈会同步一份到飞书。")
+    else:
+        print("未配置飞书 webhook：反馈只落本机。")
+    print("按 Ctrl+C 停止。")
+    try:
+        collector.serve_forever()
+    except KeyboardInterrupt:
+        print("\n已停止。")
+    finally:
+        collector.shutdown()
+    return EXIT_OK
+
+
 COMMANDS = {
     "status": cmd_status,
     "once": cmd_once,
@@ -130,6 +238,8 @@ def main(argv: list[str] | None = None) -> int:
 
     # daemon 前台手动跑时也能看到日志；计划任务/后台场景 stdout 被丢弃，无副作用
     setup_logging(paths.log_file, console=True)
+    if args.command == "feedback":
+        return cmd_feedback(cfg, paths, args)
     return COMMANDS[args.command](cfg, paths)
 
 
