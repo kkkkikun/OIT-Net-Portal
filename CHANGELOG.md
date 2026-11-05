@@ -119,12 +119,38 @@ Kotlin + Jetpack Compose + Chaquopy，复用同一份 Python 认证核心。
     服务端兼容旧分类 `issue` / `suggestion` / `ux` / `problem`，**回退安全**。
   - Python 侧 `oit_portal/feedback.py` / `mobile_feedback.py` **保留但 Android 不再调用**
     （CLI 自托管收集端 `oit-portal feedback serve|list|export` 仍可用）。
-  - Android 单测 73 → **77**（新增 `FeedbackCategoryMappingTest` 4 例）。
+  - Android 单测 73 → **79**（新增 `FeedbackCategoryMappingTest` 4 例；真机验收后补 `openFeedbackForm` 回归 2 例）。
   - Python 契约测试同步更新：`tests/test_android_feedback_contract.py` 原来断言
     「设置里要存通道凭证」「构建期要注入 `oit.feedback.secret`」，迁移后这两条**反过来**
     成了要禁止的行为 —— 契约测试现在断言**设置里不得出现任何 secret/token**、
     **构建期不得再注入 secret**、桥接实现里不得出现密钥字段。
     pytest 429 → **435**。
   - `docs/app-feedback.md` 已按新通道重写。
+
+### 修复
+
+- **提交过一次反馈后，弹窗再也打不开**（真机验收时发现）。
+  反馈表单用 `LaunchedEffect(state.feedbackSubmitted)` 在提交成功后自动收起，
+  而 `feedbackSubmitted` 提交后从不复位 —— 于是第二次打开表单时，
+  这个 effect 拿着上一次的旧值立刻把表单关掉，表现为「点『写一条反馈』没反应」。
+  修法：新增 `PortalViewModel.openFeedbackForm()`，在打开表单前把
+  `feedbackSubmitted` 与 `feedbackError` 复位；补 2 条回归测试
+  （`openFeedbackForm_clearsThePreviousSubmittedFlag` /
+  `openFeedbackForm_allowsASecondSubmission`）。
+  Android 单测 77 → **79**。
+
+### 验收
+
+- **真机闭环验收通过**（2026-11-05，红米 K50 Ultra / Android 15 / API 35，
+  服务端为自托管的 OpenFeedback，公网 HTTPS）：
+  - 在线提交 → App 显示「反馈已收到」→ 后台出现记录，
+    设备信息 `Xiaomi 22081212C / android 15 / api 35 / zh-CN`，
+    诊断摘要只含脱敏状态，无账号与完整 URL；
+  - 断网（飞行模式）提交 → App 仍显示「反馈已收到」→ 后台**查不到**，
+    反馈落盘在本机队列 `no_backup/openfeedback/queue/<uuid>/submission.json`；
+  - 恢复网络 → WorkManager（带 `CONNECTIVITY` 约束）**自动补发** →
+    后台出现记录，`submission_id` 与本机队列里的完全一致；
+  - 强制重跑 worker 3 次 → 服务端条数不变，**无重复记录**。
+
 
 见 [tasks.md](.claude/docs/tasks.md) 与 [SNAPSHOT.md](.claude/docs/SNAPSHOT.md)。

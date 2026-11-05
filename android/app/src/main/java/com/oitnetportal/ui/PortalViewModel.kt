@@ -611,6 +611,17 @@ class PortalViewModel(
     // ── 反馈 ────────────────────────────────────────────────
 
     /**
+     * 打开反馈表单前复位「已提交」标记。
+     *
+     * 表单用 `LaunchedEffect(state.feedbackSubmitted)` 来在提交成功后自动收起。
+     * 如果上一次提交留下的标记还是 true，用户第二次打开表单时这个 effect 会
+     * 立刻用旧值把表单关掉 —— 表现为「提交过一次之后就再也打不开了」。
+     */
+    fun openFeedbackForm() {
+        _uiState.update { it.copy(feedbackSubmitted = false, feedbackError = null) }
+    }
+
+    /**
      * 提交一条反馈。
      *
      * 诊断摘要在本地脱敏后才交给桥接：只保留状态类事件，

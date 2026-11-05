@@ -86,6 +86,7 @@ fun PortalApp(viewModel: PortalViewModel) {
             onSubmitFeedback = { category, content, withDiagnostics ->
                 viewModel.submitFeedback(category, content, withDiagnostics)
             },
+            onOpenFeedbackForm = { viewModel.openFeedbackForm() },
         )
     }
 }
@@ -106,6 +107,7 @@ fun PortalScreen(
     onRequestWifiPermission: () -> Unit = {},
     onOpenNotificationSettings: () -> Unit = {},
     onSubmitFeedback: (FeedbackCategory, String, Boolean) -> Unit = { _, _, _ -> },
+    onOpenFeedbackForm: () -> Unit = {},
 ) {
     var showAccountManager by remember { mutableStateOf(false) }
     var showFeedbackForm by remember { mutableStateOf(false) }
@@ -158,7 +160,13 @@ fun PortalScreen(
                 onToggleForegroundRefresh, onToggleBackgroundReconnect,
                 { showAccountManager = true }, onEndSession,
                 onOpenNotificationSettings,
-                { showFeedbackForm = true },
+                {
+                    // 打开表单前先清掉上一次的「已提交」标记。
+                    // 否则 LaunchedEffect(state.feedbackSubmitted) 会用旧值立刻
+                    // 把刚打开的表单关掉 —— 表现为「提交过一次后就再也打不开了」。
+                    onOpenFeedbackForm()
+                    showFeedbackForm = true
+                },
             )
             PortalTab.DIAGNOSTICS -> DiagnosticsPage(state, Modifier.padding(padding))
         }

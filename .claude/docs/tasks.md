@@ -60,11 +60,15 @@
 - [x] 测试：新增 `FeedbackCategoryMappingTest`（4 例）+ 改 `PortalFeedbackViewModelTest` 断言新分类；Android 单测 73→**77**
 - [x] 文档重写 `docs/app-feedback.md`（改为 OpenFeedback 配置步骤 + 断网补发说明 + 安全边界对比 + 回滚方案）
 - [x] 同步 SNAPSHOT / tasks / CHANGELOG
-- [x] 验证：`./gradlew testDebugUnitTest assembleDebug lintDebug` 全绿（**77 例 Android 单测全过，0 失败**；已核对 APK dex 内含 `openfeedback-core` 的 `FeedbackApiClient` / `FeedbackQueue` / `FeedbackUploadWorker`，且**旧飞书 webhook 与 token 在 dex 里 0 处残留**）
+- [x] 验证：`./gradlew testDebugUnitTest assembleDebug lintDebug` 全绿（**79 例 Android 单测全过，0 失败**；已核对 APK dex 内含 `openfeedback-core` 的 `FeedbackApiClient` / `FeedbackQueue` / `FeedbackUploadWorker`，且**旧飞书 webhook 与 token 在 dex 里 0 处残留**）
 - [x] 本机 `android/local.properties` 已改为 `oit.feedback.endpoint=https://8.160.116.34`，并**删除不再被读取的 `oit.feedback.secret`**
-- [ ] **真机闭环验收**（待 ADB 设备 + 公网 HTTPS）：同学端提交 → OpenFeedback 后台出现记录
-- [ ] **真机闭环验收**：断网提交 → 恢复网络 → 自动补发 → 后台**无重复记录**
-- [ ] 公网 HTTPS：阿里云安全组需放行入站 TCP 80/443，Let's Encrypt 才能签发 IP 证书（**这是当前唯一阻塞项**；实测除 SSH 的 55971 外，80/443 在公网均不可达）
+- [x] **真机闭环验收（2026-11-05，红米 K50 Ultra / Android 15 / API 35）**：
+  - 在线提交 → App 显示「反馈已收到」→ 后台出现记录（设备 `Xiaomi 22081212C / android 15 / api 35 / zh-CN`，诊断摘要只含脱敏状态，无账号/URL）
+  - **断网提交**（飞行模式）→ App 仍显示「反馈已收到」→ 后台**查不到**（0 条）→ 本机队列 `no_backup/openfeedback/queue/<uuid>/submission.json` 落盘
+  - **恢复网络** → WorkManager（带 `CONNECTIVITY` 约束）自动补发 → 后台出现记录，**`submission_id` 与本机队列里的完全一致**
+  - 强制重跑 worker 3 次 → 服务端仍是 7 条、匹配 1 条，**无重复记录**
+- [x] **修复真机验收发现的 Bug**：提交过一次后反馈弹窗再也打不开（`LaunchedEffect(state.feedbackSubmitted)` 用上一次的旧值把刚打开的表单立刻关掉）。新增 `PortalViewModel.openFeedbackForm()` 在打开前复位标记，并补 2 条回归测试
+- [x] 公网 HTTPS：阿里云安全组已放行 80/443，Let's Encrypt **生产 CA** 签发 IP 证书成功（6 天有效期，链校验 0 ok），`https://8.160.116.34` 全链路可用
 - [x] `oit.feedback.secret` 已不再被任何代码读取，已从本机配置里删掉（旧飞书 webhook token）
 
 ## 待办

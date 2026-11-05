@@ -1,6 +1,6 @@
 # Learned Spec — oit-portal
 
-> 版本: 1.3.0 | 最后更新: 2026-11-05
+> 版本: 1.4.0 | 最后更新: 2026-11-05
 
 ## Purpose
 
@@ -612,3 +612,34 @@ registry-1.docker.io / services.gradle.org 全部超时**，而
    比在镜像里 apk/pip 装稳得多）；
 3. **镜像里的 init 脚本要最小侵入** —— 只替换失效的源，不动项目声明的源，
    否则「让构建跑通」的镜像配置会顺手改掉项目语义。
+
+## 踩坑：Compose 的 LaunchedEffect 拿旧值，会把刚打开的弹窗立刻关掉（2026-11-05）
+
+**现象**：真机验收时发现，**提交过一次反馈之后，「写一条反馈」按钮就再也点不开了** ——
+点下去表单一闪就没了，看起来像按钮失灵。
+**根因**：反馈表单这样收起自己：
+
+```kotlin
+if (showFeedbackForm) {
+    LaunchedEffect(state.feedbackSubmitted) {
+        if (state.feedbackSubmitted) showFeedbackForm = false
+    }
+    FeedbackForm(...)
+}
+```
+
+`feedbackSubmitted` 是「提交成功」的标记，提交后一直是 `true`。
+而 `LaunchedEffect(key)` 在**进入组合时就会用当前的 key 跑一次**。
+所以第二次打开表单时，`showFeedbackForm` 刚变成 `true`，
+这个 effect 就立刻拿上一次的旧值 `true` 把表单关掉了 ——
+它以为是「刚刚提交成功了」，其实是「上次提交成功了」。
+**教训**：
+1. **「提交成功」这类一次性标记，用完必须复位**，不能一直挂在状态里；
+2. **用状态变化关弹窗时，要区分「这次变 true」和「本来就是 true」**：
+   在打开入口处先把标记复位（本次新增 `PortalViewModel.openFeedbackForm()`），
+   让 effect 只能被**新一次**的提交触发；
+3. **这类问题单测测不出来** —— 它在 Compose 组合的生命周期里，
+   ViewModel 层的状态断言全都正常。真机点一遍才发现，
+   所以**真机验收不能省**，尤其是在「状态机有一次性标记」的界面上；
+4. 回归测试补在 ViewModel 层（`openFeedbackForm` 会清标记、且允许第二次提交），
+   锁住的是「状态复位」这个前提 —— UI 层的 effect 行为靠真机复验。

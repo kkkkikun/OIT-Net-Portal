@@ -1,6 +1,6 @@
 # SNAPSHOT.md — 项目状态快照
 
-> 最后更新: 2026-11-05 | 验证: pytest 435 passed (无网络) + Android testDebugUnitTest **77 例全绿**（含 `FeedbackCategoryMappingTest` 4 例分类映射；`assembleDebug` + `lintDebug` 同批通过）+ **反馈通道已迁移到 OpenFeedback**（change `2026-11-05-switch-feedback-to-openfeedback`；已核对 APK dex 内含 SDK 的 `FeedbackApiClient`/`FeedbackQueue`/`FeedbackUploadWorker`，旧飞书 webhook 与 token **0 处残留**，待真机闭环验收）+ vivo V1936A 真机复现验收（2026-10-31）+ 红米 K50 Ultra / Android 15 通知权限路径验收（2026-11-01）+ Windows 端 PC 侧全链路实测（2026-11-01）+ GitHub Actions 三 job 全绿（run 41307746362，2026-11-01）
+> 最后更新: 2026-11-05 | 验证: pytest 435 passed (无网络) + Android testDebugUnitTest **79 例全绿**（含 `FeedbackCategoryMappingTest` 4 例分类映射与 `openFeedbackForm` 回归 2 例；`assembleDebug` + `lintDebug` 同批通过）+ **反馈通道已迁移到 OpenFeedback**（change `2026-11-05-switch-feedback-to-openfeedback`）+ **真机闭环验收通过**（红米 K50 Ultra / Android 15：在线提交→后台可见；断网暂存→恢复自动补发→`submission_id` 一致→强制重跑无重复；期间发现并修复「提交过一次后弹窗再也打不开」的 Bug）+ vivo V1936A 真机复现验收（2026-10-31）+ 红米 K50 Ultra / Android 15 通知权限路径验收（2026-11-01）+ Windows 端 PC 侧全链路实测（2026-11-01）+ GitHub Actions 三 job 全绿（run 41307746362，2026-11-01）
 
 ## 项目概览
 
@@ -18,7 +18,7 @@
 |---|---|
 | 语言 | Python 3.9+ |
 | 依赖 | requests, pycryptodome (可选 AES), tomli (<3.11) |
-| 测试 | pytest，435 用例全部无网络（FakeSession + fixture 状态机 + Android/Windows 托盘/Windows 脚本/Linux 打包/CI workflow/反馈通道 静态契约测试）；Android 另有 77 例 JUnit 单测 |
+| 测试 | pytest，435 用例全部无网络（FakeSession + fixture 状态机 + Android/Windows 托盘/Windows 脚本/Linux 打包/CI workflow/反馈通道 静态契约测试）；Android 另有 79 例 JUnit 单测 |
 | 打包 | pyproject.toml + setuptools，console_scripts: oit-portal；Linux 离线包 `scripts/build_linux.sh`（wheelhouse tar.gz + SHA256）；Windows PyInstaller exe |
 | 格式化 | 无强制工具，遵循现有代码风格 |
 

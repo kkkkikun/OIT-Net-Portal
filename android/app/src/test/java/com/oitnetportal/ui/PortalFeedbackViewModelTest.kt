@@ -129,6 +129,37 @@ class PortalFeedbackViewModelTest {
         assertTrue(!model.uiState.value.feedbackSubmitted)
         assertEquals("反馈提交失败，请稍后重试。", model.uiState.value.feedbackError)
     }
+
+    @Test
+    fun openFeedbackForm_clearsThePreviousSubmittedFlag() = runTest {
+        // 回归：表单用 LaunchedEffect(state.feedbackSubmitted) 自动收起。
+        // 上一次提交留下的 true 会让第二次打开的表单立刻被关掉，
+        // 表现为「提交过一次之后就再也打不开了」。
+        val bridge = FakeFeedbackBridge()
+        val model = viewModel(bridge)
+
+        model.submitFeedback(FeedbackCategory.BUG, "第一次", withDiagnostics = false)
+        assertTrue(model.uiState.value.feedbackSubmitted)
+
+        model.openFeedbackForm()
+
+        assertTrue(!model.uiState.value.feedbackSubmitted)
+        assertNull(model.uiState.value.feedbackError)
+    }
+
+    @Test
+    fun openFeedbackForm_allowsASecondSubmission() = runTest {
+        val bridge = FakeFeedbackBridge()
+        val model = viewModel(bridge)
+
+        model.submitFeedback(FeedbackCategory.BUG, "第一次", withDiagnostics = false)
+        model.openFeedbackForm()
+        model.submitFeedback(FeedbackCategory.FEATURE, "第二次", withDiagnostics = false)
+
+        assertEquals(2, bridge.submissions.size)
+        assertEquals("第二次", bridge.submissions.last().second)
+        assertTrue(model.uiState.value.feedbackSubmitted)
+    }
 }
 
 class SanitizeDiagnosticsTest {
