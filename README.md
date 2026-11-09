@@ -10,8 +10,8 @@
 
 <p align="center">
   <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.9%2B-3776AB?logo=python&logoColor=white" alt="Python 3.9+"></a>
-  <img src="https://img.shields.io/badge/tests-435%20passed-brightgreen" alt="435 tests passed">
-  <a href="https://github.com/kkkkikun/OIT-Net-Portal/releases"><img src="https://img.shields.io/badge/release-v1.0.0-blue" alt="v1.0.0"></a>
+  <img src="https://img.shields.io/badge/tests-436%20passed-brightgreen" alt="436 tests passed">
+  <a href="https://github.com/kkkkikun/OIT-Net-Portal/releases"><img src="https://img.shields.io/badge/release-v1.0.1-blue" alt="v1.0.1"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License"></a>
 </p>
 

@@ -82,3 +82,34 @@ def test_release_notes_use_index_not_regex() -> None:
 def test_release_job_checks_out_the_tag() -> None:
     """手动触发发版时，构建与说明都应按标签内容走。"""
     assert RELEASE_YML.count("ref: ${{ inputs.tag || github.ref_name }}") >= 3
+
+
+def test_android_jobs_configure_feedback_channel() -> None:
+    r"""Android job 必须从仓库变量注入反馈通道的两处真实地址，缺了要 fail-fast。
+
+    背景（2026-11-09，准备 v1.0.1 时发现）：反馈通道迁移到 OpenFeedback 后，
+    真实地址只存在于构建者本机 gitignored 的 `local.properties`（不进公开仓库），
+    而 CI 的 android job 会**整行覆写** `android/local.properties`（只写 sdk.dir）——
+
+    1. 不补回 `oit.feedback.endpoint`，CI 构建的 APK 反馈默认地址就是空串；
+    2. `openfeedback-core` 的 Maven 仓库不传 `-P`，会退到 build 里的占位地址，
+       拉到的是示例 SDK 而不是真实构件，依赖解析直接失败。
+
+    两个 workflow 都改成从仓库变量 `OIT_FEEDBACK_ENDPOINT` /
+    `OIT_OPENFEEDBACK_MAVEN_URL` 读取（Actions 变量只有仓库管理员可见），
+    缺变量时在校验步骤报 ::error 并退出非 0。
+    """
+    for name, text in WORKFLOWS.items():
+        assert "vars.OIT_FEEDBACK_ENDPOINT" in text, (
+            f"{name} 没有从仓库变量读 OIT_FEEDBACK_ENDPOINT"
+        )
+        assert (
+            'echo "oit.feedback.endpoint=${OIT_FEEDBACK_ENDPOINT}" >> android/local.properties'
+            in text
+        ), f"{name} 没有把反馈地址补回被覆写的 local.properties"
+        assert "vars.OIT_OPENFEEDBACK_MAVEN_URL" in text, (
+            f"{name} 没有从仓库变量读 OIT_OPENFEEDBACK_MAVEN_URL"
+        )
+        assert (
+            '-Poit.openfeedback.mavenUrl="$OIT_OPENFEEDBACK_MAVEN_URL"' in text
+        ), f"{name} 的 gradle 命令没有传 openfeedback Maven 仓库地址"

@@ -35,9 +35,23 @@ jobs:
           python-version: "3.10"
       - name: 确认构建机 Python 版本
         run: python3.10 --version
+      # 反馈通道的真实地址不进公开仓库，CI 从仓库变量读取
+      # （Settings → Secrets and variables → Actions → Variables）。
+      # 缺了就 fail-fast：否则发出去的 APK 会带空反馈地址、SDK 会从占位仓库拉到示例构件。
+      - name: 校验反馈通道变量（OIT_FEEDBACK_ENDPOINT / OIT_OPENFEEDBACK_MAVEN_URL）
+        env:
+          OIT_FEEDBACK_ENDPOINT: ${{ vars.OIT_FEEDBACK_ENDPOINT }}
+          OIT_OPENFEEDBACK_MAVEN_URL: ${{ vars.OIT_OPENFEEDBACK_MAVEN_URL }}
+        run: |
+          rc=0
+          [ -n "$OIT_FEEDBACK_ENDPOINT" ] || { echo "::error::缺仓库变量 OIT_FEEDBACK_ENDPOINT（OpenFeedback 服务地址，构建期注入 APK 反馈默认地址）"; rc=1; }
+          [ -n "$OIT_OPENFEEDBACK_MAVEN_URL" ] || { echo "::error::缺仓库变量 OIT_OPENFEEDBACK_MAVEN_URL（openfeedback-core SDK 的 Maven 仓库地址）"; rc=1; }
+          exit $rc
       # 不用 android-actions/setup-android：它会去装早已下架的 'tools' 包，
       # sdkmanager 以 exit 1 挂掉整步（2026-11-01 首轮 CI 踩过）。runner 镜像自带 SDK。
       - name: 定位 sdkmanager + 写 local.properties
+        env:
+          OIT_FEEDBACK_ENDPOINT: ${{ vars.OIT_FEEDBACK_ENDPOINT }}
         run: |
           set -e
           SDKMANAGER="$(command -v sdkmanager || true)"
@@ -59,6 +73,8 @@ jobs:
           echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
           echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
           echo "sdk.dir=$SDK_ROOT" > android/local.properties
+          # 上面整行覆写了 local.properties，反馈默认地址必须补回（构建期注入 APK）
+          echo "oit.feedback.endpoint=${OIT_FEEDBACK_ENDPOINT}" >> android/local.properties
       - name: 接受 Android SDK 许可（sdkmanager 是交互式的，全 y）
         run: yes | "$SDKMANAGER" --licenses || true
       - name: 安装 Android SDK 组件
@@ -67,7 +83,11 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - name: 单测 + lint + 构建 APK
         working-directory: android
-        run: ./gradlew --no-daemon testDebugUnitTest lintDebug assembleDebug
+        env:
+          OIT_OPENFEEDBACK_MAVEN_URL: ${{ vars.OIT_OPENFEEDBACK_MAVEN_URL }}
+        # openfeedback-core 的 Maven 仓库地址同样不进公开仓库，从仓库变量经 -P 传入；
+        # 不传会退到 build 里的占位地址，拉到的是示例 SDK 而不是真实构件
+        run: ./gradlew --no-daemon testDebugUnitTest lintDebug assembleDebug -Poit.openfeedback.mavenUrl="$OIT_OPENFEEDBACK_MAVEN_URL"
       - uses: actions/upload-artifact@v4
         with:
           name: app-debug-apk
