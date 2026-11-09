@@ -4,7 +4,8 @@
 
 约束 App 内嵌反馈通道的形态与安全边界：反馈入口必须在 App 内以原生界面呈现，
 收集端自托管、落盘优先于转发，同学填的内容与脱敏诊断摘要之外不得带出任何凭据。
-（2026-11-04 由 change `add-app-feedback-channel` 建立）
+（2026-11-04 由 change `add-app-feedback-channel` 建立；
+2026-11-05 change `switch-feedback-to-openfeedback` 把 Android 端迁移到 OpenFeedback 统一服务）
 ## Requirements
 ### Requirement: App 内的快速反馈入口
 
@@ -33,7 +34,9 @@ MUST NOT 依赖跳转外部浏览器或第三方问卷页面。
 
 - **GIVEN** 用户打开反馈表单
 - **WHEN** 页面渲染
-- **THEN** 界面说明反馈会发往作者配置的收集通道，不得声称「只保存在作者本机」这类与实际投递方式不符的话
+- **THEN** 界面说明反馈会发往作者的 OpenFeedback 后台，
+  不得声称「只保存在作者本机」这类与实际投递方式不符的话；
+  界面同时说明断网时会先存在手机里并在联网后自动补发
 
 ### Requirement: 反馈收集端
 
@@ -71,6 +74,14 @@ MUST 支持飞书的凭证校验，并在通道返回业务级失败时如实报
 - **WHEN** 提交一条反馈
 - **THEN** 请求体为原始反馈载荷，行为与自托管收集端既有契约一致
 
+#### Scenario: Android 端不再走 Python 收集端
+
+- **GIVEN** Android 端已迁移到 OpenFeedback
+- **WHEN** 同学在 App 内提交反馈
+- **THEN** 反馈由 SDK 直接投递到 OpenFeedback 服务，
+  不经过 `oit_portal.mobile_feedback`；
+  Python 侧的飞书直发与自托管收集端仍保留，供 CLI 与桌面端使用
+
 ### Requirement: 集中处理反馈
 
 Python 核心 MUST 提供把本地反馈集中列出与导出的命令，导出的结果 MUST 是便于逐条处理与归档的格式。
@@ -102,4 +113,53 @@ Python 核心 MUST 提供把本地反馈集中列出与导出的命令，导出�
 - **WHEN** 交付本能力
 - **THEN** 文档写明 webhook 地址会随 APK 分发、可被提取，以及必须在飞书侧开启
   签名校验 / 凭证校验 / 关键词校验
+
+### Requirement: 反馈投递到统一服务
+
+Android 客户端 MUST 把反馈投递到 OpenFeedback 统一服务，
+MUST 使用服务端认可的四类分类（bug / feature / experience / other），
+MUST NOT 在 APK 中携带任何服务端凭据。
+
+#### Scenario: 提交到统一服务
+
+- **GIVEN** 已配置 OpenFeedback 服务地址
+- **WHEN** 用户提交一条反馈
+- **THEN** 反馈以 multipart/form-data 投递到该服务的提交接口，
+  载荷含 `appId`、`submissionId`、分类、正文与 App 版本等设备上下文
+
+#### Scenario: 不携带服务端凭据
+
+- **WHEN** 检查构建产物
+- **THEN** APK 中只有公开的 `appId` 与服务地址，不含管理员密码、服务端密钥或令牌
+
+#### Scenario: 兼容旧分类
+
+- **GIVEN** 载荷里的分类是旧版的 `issue` / `suggestion` / `other`
+- **WHEN** 反馈被提交
+- **THEN** 分类被映射到服务端分类（issue→bug，suggestion→feature，other→other），
+  未知分类归为 other
+
+### Requirement: 离线反馈不丢失
+
+Android 客户端 MUST 在网络不可用时把反馈保存在本机，
+MUST 在网络恢复后自动补发，且 MUST NOT 因补发产生重复记录。
+
+#### Scenario: 断网时提交
+
+- **GIVEN** 设备没有可用网络
+- **WHEN** 用户提交一条反馈
+- **THEN** 反馈被写入 App 私有目录的队列，界面显示已收到而不是失败，
+  并登记一个带网络约束的后台任务
+
+#### Scenario: 网络恢复后自动补发
+
+- **GIVEN** 队列里有待发送的反馈
+- **WHEN** 网络恢复
+- **THEN** 后台任务自动把反馈发往服务端，成功后从队列中删除
+
+#### Scenario: 补发不产生重复记录
+
+- **GIVEN** 某条反馈已经发到服务端，但客户端没收到响应
+- **WHEN** 客户端带着同一个 `submissionId` 重试
+- **THEN** 服务端返回原记录而不新建，客户端据此识别为已发送
 

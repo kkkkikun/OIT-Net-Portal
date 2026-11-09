@@ -66,10 +66,10 @@ UI 重设计 MUST NOT 改变认证核心、凭据持久化策略或诊断脱敏�
 
 ### Requirement: App 内的快速反馈入口
 
-> 2026-11-04 由 change `add-app-feedback-channel` 加入。
-
 Android 客户端 MUST 在设置页提供可直接到达的反馈入口，且反馈表单 MUST 在 App 内以原生界面呈现，
 MUST NOT 依赖跳转外部浏览器或第三方问卷页面。
+
+> 2026-11-04 由 change `add-app-feedback-channel` 加入；完整定义见 `app-feedback` spec。
 
 #### Scenario: 打开反馈表单
 
