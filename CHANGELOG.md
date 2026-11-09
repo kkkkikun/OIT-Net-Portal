@@ -2,6 +2,99 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.0.1] - 2026-11-09
+
+App 内嵌反馈通道随版本正式落地：迁移到自托管的 **OpenFeedback** 统一服务，真机闭环验收通过。
+
+### 新增
+
+- **App 内嵌快速反馈通道**：设置页底部新增「意见反馈」卡片，点开是 **App 内原生 Compose 表单**
+  （类型 / 内容 / 是否附带脱敏诊断摘要）—— 不跳浏览器、不用问卷链接、同学不需要注册任何账号。
+  - 收集端自托管：`oit-portal feedback serve` 起极简 HTTP 服务，反馈按 JSONL 落盘到本机；
+    默认只监听回环，`--host 0.0.0.0` 才对外（收集端无鉴权，只适合可信校园网内网）。
+  - 集中处理：`oit-portal feedback list` 列出、`oit-portal feedback export` 导出 Markdown 清单
+    （正文里的 Markdown 结构字符已转义，不会把清单排版冲掉）。
+  - 可选同步飞书：配 `--feishu-webhook` 后每条反馈额外发一份到飞书
+    （群机器人发文本、多维表格发扁平 JSON）；**落盘优先、转发其次**，飞书抖动不会丢反馈。
+  - 安全边界：反馈载荷只有同学填的正文与脱敏摘要；含 URL、凭据线索或账号字样的诊断行**整行丢弃**；
+    提交走 `network.create_session()`（trust_env=False）；APK 内不含任何第三方写入凭据。
+- **反馈通道改为飞书直发**（2026-11-04）：作者不用再在自己电脑上常驻一个端口服务 ——
+  提交目标从「自托管收集端」改为**飞书 webhook**（云端常驻）。
+  - 按地址形态自动分流请求体：含 `/open-apis/bot/` 的走群机器人（`msg_type` + `content.text`），
+    其它飞书地址走**多维表格扁平 JSON**（键名即列名）。
+  - 载荷新增 `category_label`（中文分类）与 `submitted_at`，多维表格可直接建「分类」单选列与「时间」列。
+  - **支持飞书凭证校验**：群机器人签名校验（`timestamp` + `sign`，HMAC-SHA256 后 Base64）、
+    多维表格 Bearer（`Authorization` 头）。
+  - **业务码判定**：飞书即使 HTTP 200 也可能返回 `code != 0`（关键词不匹配、IP 不在白名单），
+    只看状态码会把失败当成功 → 提交层现在检查业务码，失败如实上报。
+  - 自托管收集端**保留**，作为「先审后收」或「完全离线」时的可选项。
+  - **通道地址与凭证构建期注入**：`android/local.properties`（已 gitignore）里的
+    `oit.feedback.endpoint` / `oit.feedback.secret` 由 Gradle 注入 APK；本仓库是公开仓库，
+    真实 webhook 地址与密钥不进版本控制。
+
+### 变更
+
+- **反馈通道迁移到 OpenFeedback**（2026-11-05，change `2026-11-05-switch-feedback-to-openfeedback`）：
+  提交目标从**飞书 webhook** 改为自托管的 **OpenFeedback** 统一反馈服务
+  （独立、轻量、可自托管，公开仓库 `kkkkikun/OpenFeedback`；同一套服务端 + 同一个后台，按 `appId` 区分应用）。
+  飞书直发有四个绕不开的问题：数据只进表格没有统一后台、没有截图、断网即丢、webhook 地址本身就是写入凭据。
+  - **改动面刻意压到最小**：保留本 App 自己的 Compose 表单与 `FeedbackBridge` 边界，
+    只把桥接实现从「Chaquopy → Python → requests → 飞书」换成「SDK core → HttpURLConnection → OpenFeedback」，
+    表单 UI 与交互不变。回滚是单点替换（换回 `ChaquopyFeedbackBridge` 即可恢复飞书直发）。
+  - **断网不丢、不重复**：离线时反馈存本机队列，联网后由 WorkManager 自动补发；
+    每条反馈带客户端生成的 `submissionId`，服务端按它去重，补发**不会**产生重复记录。
+  - **APK 内不再有任何服务端凭据**：只剩公开的 `appId` 与服务地址；
+    `oit.feedback.secret`（旧飞书 webhook token）不再被任何代码读取。
+  - **服务端再校验一遍**：限流（每 `appId` + IP 每小时 10 条）、字段合法性、
+    附件魔数与数量/大小限制都不信任客户端；反馈内容与截图只有登录后的管理员能看到。
+  - 新增依赖 `com.kkkkikun.openfeedback:openfeedback-core:0.1.0`，
+    用框架自带的 `HttpURLConnection`，**不给宿主引入 OkHttp / Retrofit**，依赖树不变；
+    SDK 仓库地址经 Gradle 属性 `oit.openfeedback.mavenUrl` 注入，可指向本地 `file://` 目录做离线构建。
+  - 反馈类型从三类扩到四类（问题 / 功能建议 / 体验问题 / 其他），
+    服务端兼容旧分类 `issue` / `suggestion` / `ux` / `problem`，**回退安全**。
+  - Python 侧 `oit_portal/feedback.py` / `mobile_feedback.py` **保留但 Android 不再调用**
+    （CLI 自托管收集端 `oit-portal feedback serve|list|export` 仍可用）。
+  - Android 单测 73 → **79**（新增 `FeedbackCategoryMappingTest` 4 例；真机验收后补 `openFeedbackForm` 回归 2 例）。
+  - Python 契约测试同步更新：`tests/test_android_feedback_contract.py` 原来断言
+    「设置里要存通道凭证」「构建期要注入 `oit.feedback.secret`」，迁移后这两条**反过来**
+    成了要禁止的行为 —— 契约测试现在断言**设置里不得出现任何 secret/token**、
+    **构建期不得再注入 secret**、桥接实现里不得出现密钥字段。
+    pytest 429 → **435**。
+  - `docs/app-feedback.md` 已按新通道重写。
+- **CI / 发版 workflow 补上反馈通道的真实地址注入**（2026-11-09，发 v1.0.1 前发现）：
+  OpenFeedback 迁移后真实地址只存在于构建者本机 gitignored 的 `local.properties`（不进公开仓库），
+  而 CI 的 android job「写 local.properties」步骤会**整行覆写**该文件（只剩 `sdk.dir`）——
+  CI 构建的 APK 反馈默认地址会是空串；且 `openfeedback-core` 的 Maven 仓库地址
+  不传 `-P` 会退到占位符，依赖解析拉不到真实构件。
+  `ci.yml` / `release.yml` 现在都从**仓库变量** `OIT_FEEDBACK_ENDPOINT` /
+  `OIT_OPENFEEDBACK_MAVEN_URL` 读取（Actions 变量仅仓库管理员可见，地址仍不进版本控制），
+  缺变量时 fail-fast 并给出 ::error 提示；新增契约测试
+  `test_android_jobs_configure_feedback_channel` 守住这两处注入。pytest 435 → **436**。
+
+### 修复
+
+- **提交过一次反馈后，弹窗再也打不开**（真机验收时发现）。
+  反馈表单用 `LaunchedEffect(state.feedbackSubmitted)` 在提交成功后自动收起，
+  而 `feedbackSubmitted` 提交后从不复位 —— 于是第二次打开表单时，
+  这个 effect 拿着上一次的旧值立刻把表单关掉，表现为「点『写一条反馈』没反应」。
+  修法：新增 `PortalViewModel.openFeedbackForm()`，在打开表单前把
+  `feedbackSubmitted` 与 `feedbackError` 复位；补 2 条回归测试
+  （`openFeedbackForm_clearsThePreviousSubmittedFlag` /
+  `openFeedbackForm_allowsASecondSubmission`）。
+
+### 验收
+
+- **真机闭环验收通过**（2026-11-05，红米 K50 Ultra / Android 15 / API 35，
+  服务端为自托管的 OpenFeedback，公网 HTTPS）：
+  - 在线提交 → App 显示「反馈已收到」→ 后台出现记录，
+    设备信息 `Xiaomi 22081212C / android 15 / api 35 / zh-CN`，
+    诊断摘要只含脱敏状态，无账号与完整 URL；
+  - 断网（飞行模式）提交 → App 仍显示「反馈已收到」→ 后台**查不到**，
+    反馈落盘在本机队列 `no_backup/openfeedback/queue/<uuid>/submission.json`；
+  - 恢复网络 → WorkManager（带 `CONNECTIVITY` 约束）**自动补发** →
+    后台出现记录，`submission_id` 与本机队列里的完全一致；
+  - 强制重跑 worker 3 次 → 服务端条数不变，**无重复记录**。
+
 ## [1.0.0] - 2026-11-01
 
 首个正式版本。三端（Windows / Android Termux / Linux）+ 路线B 原生 App 齐备。
@@ -69,88 +162,5 @@ Kotlin + Jetpack Compose + Chaquopy，复用同一份 Python 认证核心。
   （外部注销只能注销匿名会话）——属验收方法边界，非缺陷。
 - 门户注销端点已确认可用（`InterFace.do?method=logout`，不需要 `userIndex`），
   但 App 侧**未接入**该能力，现「结束本次会话」只关本地会话。
-
-## [未发布]
-
-### 新增
-
-- **App 内嵌快速反馈通道**：设置页底部新增「意见反馈」卡片，点开是 **App 内原生 Compose 表单**
-  （类型 / 内容 / 是否附带脱敏诊断摘要）—— 不跳浏览器、不用问卷链接、同学不需要注册任何账号。
-  - 收集端自托管：`oit-portal feedback serve` 起极简 HTTP 服务，反馈按 JSONL 落盘到本机；
-    默认只监听回环，`--host 0.0.0.0` 才对外（收集端无鉴权，只适合可信校园网内网）。
-  - 集中处理：`oit-portal feedback list` 列出、`oit-portal feedback export` 导出 Markdown 清单
-    （正文里的 Markdown 结构字符已转义，不会把清单排版冲掉）。
-  - 可选同步飞书：配 `--feishu-webhook` 后每条反馈额外发一份到飞书
-    （群机器人发文本、多维表格发扁平 JSON）；**落盘优先、转发其次**，飞书抖动不会丢反馈。
-  - 安全边界：反馈载荷只有同学填的正文与脱敏摘要；含 URL、凭据线索或账号字样的诊断行**整行丢弃**；
-    提交走 `network.create_session()`（trust_env=False）；APK 内不含任何第三方写入凭据。
-- **反馈通道改为飞书直发**（2026-11-04）：作者不用再在自己电脑上常驻一个端口服务 ——
-  提交目标从「自托管收集端」改为**飞书 webhook**（云端常驻）。
-  - 按地址形态自动分流请求体：含 `/open-apis/bot/` 的走群机器人（`msg_type` + `content.text`），
-    其它飞书地址走**多维表格扁平 JSON**（键名即列名）。
-  - 载荷新增 `category_label`（中文分类）与 `submitted_at`，多维表格可直接建「分类」单选列与「时间」列。
-  - **支持飞书凭证校验**：群机器人签名校验（`timestamp` + `sign`，HMAC-SHA256 后 Base64）、
-    多维表格 Bearer（`Authorization` 头）。
-  - **业务码判定**：飞书即使 HTTP 200 也可能返回 `code != 0`（关键词不匹配、IP 不在白名单），
-    只看状态码会把失败当成功 → 提交层现在检查业务码，失败如实上报。
-  - 自托管收集端**保留**，作为「先审后收」或「完全离线」时的可选项。
-  - **通道地址与凭证构建期注入**：`android/local.properties`（已 gitignore）里的
-    `oit.feedback.endpoint` / `oit.feedback.secret` 由 Gradle 注入 APK；    本仓库是公开仓库，真实 webhook 地址与密钥不进版本控制。
-
-### 变更
-
-- **反馈通道迁移到 OpenFeedback**（2026-11-05，change `2026-11-05-switch-feedback-to-openfeedback`）：
-  提交目标从**飞书 webhook** 改为自托管的 **OpenFeedback** 统一反馈服务
-  （独立、轻量、可自托管，公开仓库 `kkkkikun/OpenFeedback`；同一套服务端 + 同一个后台，按 `appId` 区分应用）。
-  飞书直发有四个绕不开的问题：数据只进表格没有统一后台、没有截图、断网即丢、webhook 地址本身就是写入凭据。
-  - **改动面刻意压到最小**：保留本 App 自己的 Compose 表单与 `FeedbackBridge` 边界，
-    只把桥接实现从「Chaquopy → Python → requests → 飞书」换成「SDK core → HttpURLConnection → OpenFeedback」，
-    表单 UI 与交互不变。回滚是单点替换（换回 `ChaquopyFeedbackBridge` 即可恢复飞书直发）。
-  - **断网不丢、不重复**：离线时反馈存本机队列，联网后由 WorkManager 自动补发；
-    每条反馈带客户端生成的 `submissionId`，服务端按它去重，补发**不会**产生重复记录。
-  - **APK 内不再有任何服务端凭据**：只剩公开的 `appId` 与服务地址；
-    `oit.feedback.secret`（旧飞书 webhook token）不再被任何代码读取。
-  - **服务端再校验一遍**：限流（每 `appId` + IP 每小时 10 条）、字段合法性、
-    附件魔数与数量/大小限制都不信任客户端；反馈内容与截图只有登录后的管理员能看到。
-  - 新增依赖 `com.kkkkikun.openfeedback:openfeedback-core:0.1.0`，
-    用框架自带的 `HttpURLConnection`，**不给宿主引入 OkHttp / Retrofit**，依赖树不变；
-    SDK 仓库地址经 Gradle 属性 `oit.openfeedback.mavenUrl` 注入，可指向本地 `file://` 目录做离线构建。
-  - 反馈类型从三类扩到四类（问题 / 功能建议 / 体验问题 / 其他），
-    服务端兼容旧分类 `issue` / `suggestion` / `ux` / `problem`，**回退安全**。
-  - Python 侧 `oit_portal/feedback.py` / `mobile_feedback.py` **保留但 Android 不再调用**
-    （CLI 自托管收集端 `oit-portal feedback serve|list|export` 仍可用）。
-  - Android 单测 73 → **79**（新增 `FeedbackCategoryMappingTest` 4 例；真机验收后补 `openFeedbackForm` 回归 2 例）。
-  - Python 契约测试同步更新：`tests/test_android_feedback_contract.py` 原来断言
-    「设置里要存通道凭证」「构建期要注入 `oit.feedback.secret`」，迁移后这两条**反过来**
-    成了要禁止的行为 —— 契约测试现在断言**设置里不得出现任何 secret/token**、
-    **构建期不得再注入 secret**、桥接实现里不得出现密钥字段。
-    pytest 429 → **435**。
-  - `docs/app-feedback.md` 已按新通道重写。
-
-### 修复
-
-- **提交过一次反馈后，弹窗再也打不开**（真机验收时发现）。
-  反馈表单用 `LaunchedEffect(state.feedbackSubmitted)` 在提交成功后自动收起，
-  而 `feedbackSubmitted` 提交后从不复位 —— 于是第二次打开表单时，
-  这个 effect 拿着上一次的旧值立刻把表单关掉，表现为「点『写一条反馈』没反应」。
-  修法：新增 `PortalViewModel.openFeedbackForm()`，在打开表单前把
-  `feedbackSubmitted` 与 `feedbackError` 复位；补 2 条回归测试
-  （`openFeedbackForm_clearsThePreviousSubmittedFlag` /
-  `openFeedbackForm_allowsASecondSubmission`）。
-  Android 单测 77 → **79**。
-
-### 验收
-
-- **真机闭环验收通过**（2026-11-05，红米 K50 Ultra / Android 15 / API 35，
-  服务端为自托管的 OpenFeedback，公网 HTTPS）：
-  - 在线提交 → App 显示「反馈已收到」→ 后台出现记录，
-    设备信息 `Xiaomi 22081212C / android 15 / api 35 / zh-CN`，
-    诊断摘要只含脱敏状态，无账号与完整 URL；
-  - 断网（飞行模式）提交 → App 仍显示「反馈已收到」→ 后台**查不到**，
-    反馈落盘在本机队列 `no_backup/openfeedback/queue/<uuid>/submission.json`；
-  - 恢复网络 → WorkManager（带 `CONNECTIVITY` 约束）**自动补发** →
-    后台出现记录，`submission_id` 与本机队列里的完全一致；
-  - 强制重跑 worker 3 次 → 服务端条数不变，**无重复记录**。
-
 
 见 [tasks.md](.claude/docs/tasks.md) 与 [SNAPSHOT.md](.claude/docs/SNAPSHOT.md)。
