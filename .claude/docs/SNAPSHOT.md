@@ -1,6 +1,6 @@
 # SNAPSHOT.md — 项目状态快照
 
-> 最后更新: 2026-11-05 | 验证: pytest 435 passed (无网络) + Android testDebugUnitTest **79 例全绿**（含 `FeedbackCategoryMappingTest` 4 例分类映射与 `openFeedbackForm` 回归 2 例；`assembleDebug` + `lintDebug` 同批通过）+ **反馈通道已迁移到 OpenFeedback**（change `2026-11-05-switch-feedback-to-openfeedback`）+ **真机闭环验收通过**（红米 K50 Ultra / Android 15：在线提交→后台可见；断网暂存→恢复自动补发→`submission_id` 一致→强制重跑无重复；期间发现并修复「提交过一次后弹窗再也打不开」的 Bug）+ vivo V1936A 真机复现验收（2026-10-31）+ 红米 K50 Ultra / Android 15 通知权限路径验收（2026-11-01）+ Windows 端 PC 侧全链路实测（2026-11-01）+ GitHub Actions 三 job 全绿（run 41307746362，2026-11-01）
+> 最后更新: 2026-11-09 | 验证: pytest 436 passed (无网络) + Android testDebugUnitTest **79 例全绿**（含 `FeedbackCategoryMappingTest` 4 例分类映射与 `openFeedbackForm` 回归 2 例；`assembleDebug` + `lintDebug` 同批通过）+ **反馈通道已迁移到 OpenFeedback**（change 已归档 2026-11-09，openspec 全量校验 8/8 绿）+ **真机闭环验收通过**（红米 K50 Ultra / Android 15：在线提交→后台可见；断网暂存→恢复自动补发→`submission_id` 一致→强制重跑无重复；期间发现并修复「提交过一次后弹窗再也打不开」的 Bug）+ vivo V1936A 真机复现验收（2026-10-31）+ 红米 K50 Ultra / Android 15 通知权限路径验收（2026-11-01）+ Windows 端 PC 侧全链路实测（2026-11-01）+ GitHub Actions 三 job 全绿（run 41307746362，2026-11-01）
 
 ## 项目概览
 
@@ -18,7 +18,7 @@
 |---|---|
 | 语言 | Python 3.9+ |
 | 依赖 | requests, pycryptodome (可选 AES), tomli (<3.11) |
-| 测试 | pytest，435 用例全部无网络（FakeSession + fixture 状态机 + Android/Windows 托盘/Windows 脚本/Linux 打包/CI workflow/反馈通道 静态契约测试）；Android 另有 79 例 JUnit 单测 |
+| 测试 | pytest，436 用例全部无网络（FakeSession + fixture 状态机 + Android/Windows 托盘/Windows 脚本/Linux 打包/CI workflow/反馈通道 静态契约测试）；Android 另有 79 例 JUnit 单测 |
 | 打包 | pyproject.toml + setuptools，console_scripts: oit-portal；Linux 离线包 `scripts/build_linux.sh`（wheelhouse tar.gz + SHA256）；Windows PyInstaller exe |
 | 格式化 | 无强制工具，遵循现有代码风格 |
 
@@ -103,7 +103,7 @@ openspec/                   # OpenSpec 规范体系（specs/ + changes/）
 - **反馈通道改为飞书直发（2026-11-04）**: 用户明确不想一直开着电脑上的一个端口服务，因此把提交目标从「作者机器上的自托管收集端」改成**飞书 webhook**（云端常驻，作者不占机器）。App 里的地址按形态自动分流：含 `/open-apis/bot/` 的走群机器人（`msg_type` + `content.text`），其它飞书地址走**多维表格扁平 JSON**（键名即表格列名，载荷新增 `category_label` 中文分类与 `submitted_at` 便于建单选列与时间列）。**支持飞书凭证校验**：群机器人签名校验（`timestamp` + `sign`，HMAC-SHA256 后 Base64）与多维表格 Bearer（`Authorization` 头）——因为 webhook 地址会随 APK 分发可被提取，**飞书侧必须开校验**才是有效防线。另外补了一个真坑：飞书即使 HTTP 200 也可能返回 `code != 0`（关键词不匹配、IP 不在白名单），只看状态码会把失败当成功 → 提交层现在检查业务码。自托管收集端**保留**（先审后收 / 完全离线时用）。**反馈通道地址与凭证改为构建期注入**（`android/local.properties` 的 `oit.feedback.endpoint` / `oit.feedback.secret` → Gradle 生成 `BuildConfigFeedback`）：本仓库是公开仓库，真实 webhook 地址与密钥只留在构建者本机，不进版本控制（已验证：APK dex 里有注入值、`git grep` 在入库文件里查不到）。pytest 403→**429**
 - **反馈通道已接上真实飞书多维表格（2026-11-05）**: 用户提供了真实 webhook 地址与 token，已写入 `android/local.properties`（已 gitignore）并用 App 侧同款代码**实测提交成功**（飞书返回 `code:0`），APK 用真实配置重建完成（dex 内含地址与凭据，`git grep` 确认未入库）。**实测发现飞书侧「凭证校验」尚未开启** —— 不带 `Authorization` 头 POST 同样返回 `code:0`，即当前地址泄露即可写入；已在 `docs/app-feedback.md` 给出 curl 自查方法，**分发前必须去飞书把凭证校验打开**。
 - **反馈通道迁移到 OpenFeedback（2026-11-05，change `2026-11-05-switch-feedback-to-openfeedback`）**: 飞书直发有四个绕不开的问题——数据只进表格没有统一后台、没有截图、断网即丢、webhook 地址本身就是写入凭据。改为接入 **OpenFeedback**（独立、轻量、可自托管的多应用统一反馈服务，公开仓库 `kkkkikun/OpenFeedback`）：同一个服务端 + 同一个后台，按 `appId` 区分应用。**改动面刻意压到最小**——保留本 App 自己的 Compose 表单与 `FeedbackBridge` 边界，只把桥接实现从「Chaquopy → Python → requests → 飞书」换成「SDK core → HttpURLConnection → OpenFeedback」，表单 UI 与交互不变。三个实质性收益：①**断网不丢**——反馈存本机队列，联网后由 WorkManager 自动补发，且带 `submissionId` 由服务端去重，**补发不会产生重复记录**；②**APK 里不再有任何服务端凭据**——只剩公开的 `appId` 与服务地址（旧方案的飞书 token 已不再被读取，可从 `local.properties` 删除）；③**服务端再校验一遍**——限流（每 appId+IP 每小时 10 条）、字段合法性、附件魔数与数量/大小限制都不信任客户端。新增依赖 `com.kkkkikun.openfeedback:openfeedback-core:0.1.0`（用框架自带 `HttpURLConnection`，**不给宿主引入 OkHttp/Retrofit**，依赖树不变）；SDK 仓库地址经 Gradle 属性 `oit.openfeedback.mavenUrl` 注入（默认 `https://feedback.example.com/maven/`），可指向本地 `file://` 目录做离线构建。反馈类型从三类扩到四类（问题/功能建议/体验问题/其他），服务端兼容旧分类 `issue`/`suggestion`/`ux`/`problem`，**回退安全**。Python 侧 `oit_portal/feedback.py` / `mobile_feedback.py` **保留但 Android 不再调用**（CLI 自托管收集端 `oit-portal feedback serve|list|export` 仍可用）。回滚是单点替换：把注入的桥接换回 `ChaquopyFeedbackBridge` 即可恢复飞书直发，不用回滚服务端也不用动表单 UI。Android 单测 73→**77**（新增 `FeedbackCategoryMappingTest` 4 例，并改 `PortalFeedbackViewModelTest` 断言新分类）
-- **已归档 change**: android-ui-refresh（2026-10-27）、android-background-auto-reconnect（2026-10-27）、add-app-feedback-channel（2026-11-04）、switch-feedback-to-feishu-direct（2026-11-04）
+- **已归档 change**: android-ui-refresh（2026-10-27）、android-background-auto-reconnect（2026-10-27）、add-app-feedback-channel（2026-11-04）、switch-feedback-to-feishu-direct（2026-11-04）、switch-feedback-to-openfeedback（2026-11-09）
 
 ## 安全红线（改代码前自查）
 

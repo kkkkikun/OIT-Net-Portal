@@ -1,6 +1,6 @@
 # tasks.md — 全局任务追踪
 
-> 最后更新: 2026-11-05
+> 最后更新: 2026-11-09
 > 与 openspec/changes/ 的关系: 大改动走 `/opsx:propose` 生成 change 提案（openspec/changes/<name>/）；这里只记跨 change 的长期事项与日常待办。
 
 ## 进行中
@@ -19,7 +19,7 @@
 - [x] 设置页（2026-10-21：网络恢复/前台自动刷新两个开关，AppSettingsStore 持久化，默认开启）
 - [x] 日志查看（2026-10-21：会话内诊断事件卡，最近 50 条脱敏事件，界面展示最新 10 条）
 - [ ] Capture（延后：本校协议已实测确认，移动端首装可无 protocol.json fail-closed 登录，非必需）
-- [x] 后台自动重连（2026-10-24：前台 Service + 有界调度器接通，默认关闭、通知授权、通知停止、60s 巡检/30s 离线兜底/CAPTIVE 才登录/300s 最小重登/三次失败人工介入；264 pytest + 48 Android 单测 + assembleDebug + lintDebug 通过；两轮审查修复启停竞态与节流重置；**真机后台验收待 ADB 设备重连**）
+- [x] 后台自动重连（2026-10-24：前台 Service + 有界调度器接通，默认关闭、通知授权、通知停止、60s 巡检/30s 离线兜底/CAPTIVE 才登录/300s 最小重登/三次失败人工介入；264 pytest + 48 Android 单测 + assembleDebug + lintDebug 通过；两轮审查修复启停竞态与节流重置；真机后台验收已于 2026-10-27 完成，见下「已完成」）
 - [x] **Debug APK 装机（2026-10-31）**：`com.oitnetportal` v0.1.0（versionCode=1 / targetSdk=35）已装到**红米 K50 Ultra（22081212C，HyperOS 2 / Android 15 / API 35）**，`adb install -r -t -g` 全部运行时权限已授予；**验收按用户决定暂缓**，未做登录/后台重连实测）
 - [x] 凭据安全存储（2026-10-21：Android Keystore AES-256/GCM；记住密码用户明示、默认不勾选、不自动登录；登录成功才保存）
 - [x] 学生网 ePortal gzip 乱码修复（2026-10-22：_response_text 魔数兜底，真机 logcat 定位）
@@ -27,49 +27,6 @@
 - [x] 网络恢复回调（2026-10-21）
 - [x] 首次编译 → APK 构建（2026-10-21，无 Wrapper，用本机 Gradle 8.9 + 命令行代理参数）
 - [x] 第二轮真机验收全部通过（2026-10-21）：首次登录直接显示在线、Wi-Fi 断开置离线、恢复后自动刷新、重试登录、结束会话后网络事件不触发重登、重新登录
-
-## 进行中
-
-### App 内嵌快速反馈通道（change `add-app-feedback-channel`）
-
-- [x] OpenSpec 提案 + 设计说明 + Delta Spec（`openspec/changes/add-app-feedback-channel/`）
-- [x] Python 侧：`oit_portal/feedback.py`（载荷构造 / 脱敏摘要 / JSONL 存储 / HTTP 收集端 / 飞书可选转发 / 客户端提交）
-- [x] Python 侧：`oit_portal/mobile_feedback.py`（移动端反馈桥接，与认证桥接同等级别脱敏）
-- [x] CLI：`oit-portal feedback serve|list|export`
-- [x] Android 侧：`FeedbackBridge` 契约 + Chaquopy 实现 + `FeedbackSettingsStore`（收集端地址）
-- [x] Android 侧：`FeedbackForm` 原生表单 + 设置页「意见反馈」卡片 + ViewModel 接线（脱敏诊断摘要）
-- [x] 验证：pytest 403 passed / Android 单测 73 例 / assembleDebug / lintDebug 全绿 + 端到端联调
-- [ ] **真机验收**（待 ADB 设备）：同学端提交 → 飞书表格里看到
-- [x] **通道地址与凭证已配置**（2026-11-05）：真实地址与 token 已写入 `android/local.properties`（已 gitignore），实测提交返回 `code:0`，APK 已用真实配置重建
-- [ ] **⚠️ 分发前必须在飞书侧开启「凭证校验」**：实测不带 `Authorization` 头也能 `code:0` 通过 → 当前地址泄露即可写入。开启后用 `curl` 不带 token POST 一次，应返回非 0 code
-- [x] **改为飞书直发（2026-11-04）**：用户不想一直开着电脑上的端口服务 → 提交目标改为飞书 webhook；按地址形态自动分流群机器人 / 多维表格两种请求体；支持群机器人签名校验与多维表格 Bearer 凭证；补上「飞书 HTTP 200 但 `code != 0` 也算失败」的判定；自托管收集端保留为备选路径
-
-### 反馈通道迁移到 OpenFeedback（change `2026-11-05-switch-feedback-to-openfeedback`）
-
-目标：把反馈从「飞书直发」换成自托管的 **OpenFeedback** 统一服务（公开仓库 `kkkkikun/OpenFeedback`），
-拿到统一后台 + 截图 + 断网不丢 + APK 无凭据。改动面刻意压到最小：保留本 App 自己的表单与
-`FeedbackBridge` 边界，只换桥接实现。
-
-- [x] OpenSpec 提案 + 设计说明 + Delta Spec（`openspec/changes/2026-11-05-switch-feedback-to-openfeedback/`）
-- [x] Android 侧：新增 `core/OpenFeedbackBridge.kt`（实现既有 `FeedbackBridge` 边界，走 SDK core，不碰 Chaquopy）
-- [x] Android 侧：改 `core/FeedbackSettingsStore.kt`（`collectorEndpoint` + `collectorSecret` → `serviceEndpoint`，不再需要凭证字段）
-- [x] Android 侧：改 `MainActivity.kt`（桥接换成 `OpenFeedbackBridge.create(...)`）
-- [x] Android 侧：改 `ui/FeedbackForm.kt`（分类扩为 bug/feature/experience/other；文案改为「发到作者的 OpenFeedback 后台…断网时会先存在手机里，联网后自动补发」）
-- [x] 构建配置：`app/build.gradle.kts` 加 `openfeedback-core:0.1.0` 依赖；`generateFeedbackConfig` **只注入地址、不注入凭证**
-- [x] 构建配置：`settings.gradle.kts` 加 openfeedback Maven 仓库，URL 由 `oit.openfeedback.mavenUrl` 属性决定（可指向 `file://` 本地目录做离线构建）
-- [x] 测试：新增 `FeedbackCategoryMappingTest`（4 例）+ 改 `PortalFeedbackViewModelTest` 断言新分类；Android 单测 73→**77**
-- [x] 文档重写 `docs/app-feedback.md`（改为 OpenFeedback 配置步骤 + 断网补发说明 + 安全边界对比 + 回滚方案）
-- [x] 同步 SNAPSHOT / tasks / CHANGELOG
-- [x] 验证：`./gradlew testDebugUnitTest assembleDebug lintDebug` 全绿（**79 例 Android 单测全过，0 失败**；已核对 APK dex 内含 `openfeedback-core` 的 `FeedbackApiClient` / `FeedbackQueue` / `FeedbackUploadWorker`，且**旧飞书 webhook 与 token 在 dex 里 0 处残留**）
-- [x] 本机 `android/local.properties` 已改为 `oit.feedback.endpoint=https://8.160.116.34`，并**删除不再被读取的 `oit.feedback.secret`**
-- [x] **真机闭环验收（2026-11-05，红米 K50 Ultra / Android 15 / API 35）**：
-  - 在线提交 → App 显示「反馈已收到」→ 后台出现记录（设备 `Xiaomi 22081212C / android 15 / api 35 / zh-CN`，诊断摘要只含脱敏状态，无账号/URL）
-  - **断网提交**（飞行模式）→ App 仍显示「反馈已收到」→ 后台**查不到**（0 条）→ 本机队列 `no_backup/openfeedback/queue/<uuid>/submission.json` 落盘
-  - **恢复网络** → WorkManager（带 `CONNECTIVITY` 约束）自动补发 → 后台出现记录，**`submission_id` 与本机队列里的完全一致**
-  - 强制重跑 worker 3 次 → 服务端仍是 7 条、匹配 1 条，**无重复记录**
-- [x] **修复真机验收发现的 Bug**：提交过一次后反馈弹窗再也打不开（`LaunchedEffect(state.feedbackSubmitted)` 用上一次的旧值把刚打开的表单立刻关掉）。新增 `PortalViewModel.openFeedbackForm()` 在打开前复位标记，并补 2 条回归测试
-- [x] 公网 HTTPS：阿里云安全组已放行 80/443，Let's Encrypt **生产 CA** 签发 IP 证书成功（6 天有效期，链校验 0 ok），`https://8.160.116.34` 全链路可用
-- [x] `oit.feedback.secret` 已不再被任何代码读取，已从本机配置里删掉（旧飞书 webhook token）
 
 ## 待办
 
@@ -79,7 +36,7 @@
 
 ## 待决策（需要用户操作，Agent 无法代做）
 
-- [ ] **Windows 端「真实静默登录」验收** —— 需要校园网密码。托盘已装好并运行中（`D:\oit-portal-venv312`，账号已从 `config.toml` 预填），**设置窗口已经开在用户桌面上**：在窗口里输入密码 → 点「保存并连接」→ 托盘图标应先变「检测中」再变「在线」。密码不经过 Agent，全程在用户本机输入。验收清单第 1/2/3 项都依赖这一步
+- [ ] **Windows 端「真实静默登录」验收** —— 需要校园网密码。托盘已装好并运行中（`D:\oit-portal-venv312`，账号已从 `config.toml` 预填），在设置窗口里输入密码 → 点「保存并连接」→ 托盘图标应先变「检测中」再变「在线」。密码不经过 Agent，全程在用户本机输入。验收清单第 1/2/3 项都依赖这一步。**2026-11-09 更新**：用户计划另找一台电脑实测，拿到结果后回填此项
 
 
 ## 阻塞项
@@ -94,6 +51,8 @@
 - **P3/P4 的新 APK 只在红米（Android 15）复验**：vivo（Android 9）上仍是旧版本，下次接 vivo 时顺带回归
 
 ## 已完成（近期）
+
+- [x] **App 内嵌反馈通道全链路完成并归档（2026-11-04 → 2026-11-09）**：演进路径 = 自托管收集端（`e5d7436`，CLI `feedback serve|list|export` 保留至今）→ 飞书直发（2026-11-04，解决「作者要常驻端口服务」）→ **OpenFeedback 统一服务**（`9779839`，2026-11-05 迁移，解决「无统一后台 / 无截图 / 断网即丢 / webhook 即凭据」四问题）。OpenFeedback 版：断网落本机队列 + WorkManager 自动补发、服务端按 `submissionId` 去重、APK 零凭据（只有公开 `appId` 与地址）；真机闭环验收通过（在线提交 / 断网排队 / 补发无重复，红米 K50 Ultra / Android 15）；修掉「提交过一次弹窗打不开」bug（`18e42d1`）。**飞书时代遗留的「分发前必须开凭证校验」警告已随迁移销项**——APK 已不含飞书 webhook、token 已删且无代码读取，该前提不复存在（若日后回滚到 `ChaquopyFeedbackBridge` 飞书直发，需重新执行该警告）。change 已归档：`openspec/changes/archive/2026-11-09-switch-feedback-to-openfeedback/`（归档时补回被 delta 整体替换误删的两个仍有效 scenario：业务码失败判定 / 自托管收集端投递）
 
 - [x] **v1.0.0 发布 + GitHub Actions 落地（2026-11-01）**：`android-app` 纯快进合并进 `main`（两分支现已同步）；版本号 1.0.0（`versionCode` 2）；新增 `CHANGELOG.md` + README 徽章 + Gradle Wrapper 入库；`.github/workflows/ci.yml` 与 `release.yml`。**首轮 CI 全红 → 修 5 个真问题 → 第三轮三 job 全绿（run 41307746362）**：①pytest ≥9.2 往 `propagate=False` 的 logger 挂 `LogCaptureHandler` → `setup_logging` 的 `if logger.handlers` 误判 → 日志文件从未创建（本地 pytest 9.0.3 无此行为，本地绿 CI 红）→ 改用自有 handler 标记（`oit_portal/log.py`）；②`build_windows.ps1` 只装第三方依赖 → 托盘 import requests 失败 → 更正为「先停运行中的托盘再正常装 `.[tray]`」；③`android-actions/setup-android` 去装下架的 `tools` 包 → 改用 runner 预装 SDK + `yes | sdkmanager --licenses`；④Chaquopy 要求构建机 Python 与 App 内嵌版本一致（3.10）→ Android job 补装 Python 3.10；⑤发版说明 awk 正则 `"^## \["` 匹配不到任何行 → 改用 `index()`。新增 `tests/test_ci_workflow_contract.py`（6 例）守住这四条约束。pytest 324→**332**
 - [x] **发版后的三处收尾（2026-11-01）**：①`oit_portal/__init__.py` 的 `__version__` 还写着 0.1.0（pyproject 已是 1.0.0）→ `oit-portal --version` 对外报假版本号 → 改为以 `importlib.metadata` 包元数据为准 + `tests/test_version.py`（3 例）；②`install_windows_tray.ps1` 与 `build_windows.ps1` 同一个坑：托盘在跑时重装撞 WinError 5 → 补「先停托盘再装」；③校内网 pypi 读超时导致 `pip install "[tray]"` 失败 → 加 `--no-build-isolation` 离线兜底。真机复验：重跑安装脚本 → 常规失败 → 兜底成功 → 托盘重新拉起并存活，`oit-portal --version` = 1.0.0，自启项完好。pytest 332→**337**
