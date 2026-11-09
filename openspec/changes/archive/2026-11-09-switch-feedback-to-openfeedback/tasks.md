@@ -36,6 +36,6 @@
       否则 Caddy 拿不到证书（Let's Encrypt 验证器报 "likely firewall problem"）
       （2026-11-05：安全组已放行，Let's Encrypt 生产 CA 签发 IP 证书成功，链校验 0 ok）
 - [x] `android/local.properties` 的 `oit.feedback.endpoint` 填 OpenFeedback 服务地址
-      （2026-11-05：已填 `https://8.160.116.34`）
+      （2026-11-05：已填当时的生产服务地址；2026-11-09 起服务切换为域名，真实地址见 GitHub 仓库变量）
 - [x] `oit.feedback.secret` 已不再使用，可以从本机配置里删掉
       （2026-11-05：已删除，`git grep` 确认无代码读取）
