@@ -128,12 +128,14 @@ def test_diagnostics_drop_lines_mentioning_account_names() -> None:
 
 
 def test_diagnostics_cap_line_count_and_length() -> None:
-    raw = "\n".join(f"状态事件 {index}：ONLINE" for index in range(50))
+    long_tail = "A" * 240
+    raw = "\n".join(f"12:00:{index:02d} 手动刷新：ONLINE {long_tail}" for index in range(50))
 
     cleaned = sanitize_diagnostics(raw)
+    lines = cleaned.splitlines()
 
-    assert len(cleaned.splitlines()) <= 10
-    assert all(len(line) <= 200 for line in cleaned.splitlines())
+    assert len(lines) == 10
+    assert all(len(line) == 200 for line in lines)
 
 
 def test_diagnostics_empty_input_yields_empty_text() -> None:

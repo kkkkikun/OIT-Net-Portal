@@ -41,15 +41,24 @@ def load(session: requests.Session, path: Path) -> int:
     except (json.JSONDecodeError, OSError) as exc:
         logger.warning("session 文件损坏，忽略：%s", exc)
         return 0
+    if not isinstance(jars, list):
+        logger.warning("session 文件格式无效，忽略")
+        return 0
     now = time.time()
     count = 0
     for item in jars:
+        if not isinstance(item, dict):
+            continue
+        name = item.get("name")
+        value = item.get("value")
+        if not isinstance(name, str) or not isinstance(value, str):
+            continue
         expires = item.get("expires")
-        if expires and expires <= now:
+        if isinstance(expires, (int, float)) and expires and expires <= now:
             continue
         session.cookies.set(
-            item["name"], item["value"],
-            domain=item.get("domain", ""), path=item.get("path", "/"),
+            name, value,
+            domain=str(item.get("domain", "")), path=str(item.get("path", "/")),
         )
         count += 1
     logger.info("从磁盘恢复 %d 个会话 cookie", count)

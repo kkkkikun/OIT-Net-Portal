@@ -79,7 +79,7 @@ fi
 OIT_PORTAL_HOME="$CFG_DIR" "$EXEC_START" configure
 
 echo "==> [4/6] 注册 systemd 系统服务"
-"$EXEC_START" stop 2>/dev/null || true
+OIT_PORTAL_HOME="$CFG_DIR" "$EXEC_START" stop 2>/dev/null || true
 UNIT_TMP="$(mktemp)"
 TEMPLATE="$SERVICE_TEMPLATE" OUTPUT="$UNIT_TMP" TARGET_USER="$(id -un)" \
   TARGET_HOME="$HOME" TARGET_EXEC="$EXEC_START" TARGET_CONFIG="$CFG_DIR" \
@@ -107,7 +107,7 @@ systemctl --no-pager --full status oit-portal.service || true
 
 if [ "$SKIP_LOGIN" = false ]; then
   echo "==> [6/6] 试跑登录（非校园网或需验证码时可稍后重试）"
-  "$EXEC_START" once || true
+  OIT_PORTAL_HOME="$CFG_DIR" "$EXEC_START" once || true
 else
   echo "==> [6/6] 已跳过安装后试登"
 fi

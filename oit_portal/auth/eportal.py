@@ -39,7 +39,7 @@ CAPTURED = SimpleNamespace(
     },
     success_markers=["成功", "success"],              # <CAPTURE:C3.4> 响应体成功标记
     user_index_pattern=r"userIndex['\"]?\s*[:=]\s*['\"]?([0-9A-Za-z]+)",
-    keepalive_pattern=r"keepaliveInterval['\"]?\s*[:=]\s*['\"]?(\d+)",
+    keepalive_pattern=r"(?:keepaliveInterval|liveInterval)['\"]?\s*[:=]\s*['\"]?(?:\d+:)?(\d+)",
     logout_endpoint="/eportal/InterFace.do?method=logout",
 )
 
@@ -86,9 +86,9 @@ class EportalAdapter:
         if not code.code:  # 表单直登模式：登录 POST 已直接上线，无需再调 ePortal
             return OnlineResult(success=True, mode="direct",
                                 message="表单直登，跳过 ePortal 调用")
-        if CAPTURED.online_mode == "sso_pass":
-            return self._online_sso_pass(code, challenge)
-        return self._online_interface_do(code, challenge)
+        if CAPTURED.online_mode == "interface_do":
+            return self._online_interface_do(code, challenge)
+        return self._online_sso_pass(code, challenge)
 
     def _online_sso_pass(self, code: AuthCode, challenge: PortalChallenge) -> OnlineResult:
         """预设分支：GET login_sso.jsp?code=...（跟随重定向）即完成上线。"""
@@ -118,11 +118,13 @@ class EportalAdapter:
 
     def _judge(self, resp: requests.Response, *, mode: str) -> OnlineResult:
         body = _response_text(resp)[:8192]
+        url_text = getattr(resp, "url", "") or ""
+        search_target = f"{url_text}\n{body}" if url_text else body
         user_index = keepalive = None
-        m = re.search(CAPTURED.user_index_pattern, body)
+        m = re.search(CAPTURED.user_index_pattern, search_target)
         if m:
             user_index = m.group(1)
-        m = re.search(CAPTURED.keepalive_pattern, body)
+        m = re.search(CAPTURED.keepalive_pattern, search_target)
         if m:
             keepalive = int(m.group(1))
         hit = any(marker in body for marker in CAPTURED.success_markers)

@@ -37,13 +37,13 @@ class ChaquopyFeedbackBridge private constructor(
                     throw FeedbackUnavailableException()
                 }
                 try {
-                    val result = bridge.callAttr(
+                    val result: PyObject? = bridge.callAttr(
                         "submit",
                         category,
                         content,
                         diagnostics,
                     )
-                    result.close()
+                    result?.close()
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (_: PyException) {

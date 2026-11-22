@@ -37,8 +37,8 @@ def test_feedback_form_is_native_and_has_three_fields() -> None:
 
 
 def test_feedback_form_offers_three_categories() -> None:
-    for label in ("建议", "问题", "其他"):
-        assert label in FORM
+    for label in ("问题", "功能建议", "体验问题", "其他"):
+        assert f'"{label}"' in FORM
 
 
 def test_feedback_form_rejects_empty_content() -> None:

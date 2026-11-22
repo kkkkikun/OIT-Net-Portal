@@ -114,16 +114,18 @@ def cmd_login_info(cfg: Config, paths: AppPaths) -> int:
 def cmd_configure(cfg: Config, paths: AppPaths) -> int:
     import getpass
 
+    config_target = cfg.config_path or paths.config
+    creds_target = cfg.credentials_path or paths.credentials
     try:
         default = f" [{cfg.username}]" if cfg.username else ""
         username = input(f"校园网账号{default}（回车保留）: ").strip() or cfg.username or ""
         password = getpass.getpass("校园网密码（输入不回显，回车保留）: ") or cfg.password or ""
-        save_account(paths.config, paths.credentials, username, password)
+        save_account(config_target, creds_target, username, password)
     except (ValueError, OSError, EOFError, KeyboardInterrupt) as exc:
         print(f"\n配置失败：{exc}", file=sys.stderr)
         return EXIT_ERROR
-    print(f"配置已保存：{paths.config}")
-    print(f"凭据已保存：{paths.credentials}")
+    print(f"配置已保存：{config_target}")
+    print(f"凭据已保存：{creds_target}")
     return EXIT_OK
 
 

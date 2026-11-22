@@ -39,7 +39,7 @@ class MobileFeedbackBridge:
     def is_available(self) -> bool:
         return not self._closed and bool(self._endpoint)
 
-    def submit(self, *, category: str, content: str, diagnostics: str | None) -> None:
+    def submit(self, category: str, content: str, diagnostics: str | None = None) -> None:
         """提交一条反馈。参数无效直接抛 ValueError，网络失败抛 RuntimeError。"""
         if self._closed:
             raise RuntimeError("反馈桥接已关闭")

@@ -1,12 +1,13 @@
 # AGENTS.md — OIT-Net-Portal
 
-校园网（鄂尔多斯应用技术学院）静默自动登录 + 保活工具。Python 3.9+，单代码库多端共用（Windows 托盘/计划任务 / Android Termux / Linux systemd / Android 原生 App 路线B WIP）。
+校园网（鄂尔多斯应用技术学院）静默自动登录 + 保活工具。Python 3.9+，单代码库多端共用（Windows 托盘/计划任务 / Android Termux / Linux systemd / Android 原生 App 路线B）。
 
 ## 仓库结构
 
 | 路径 | 作用 |
 |---|---|
-| `oit_portal/cli.py` | CLI 入口，子命令：`status / once / daemon / stop / login-info / capture / configure` |
+| `oit_portal/cli.py` | CLI 入口，子命令：`status / once / daemon / stop / login-info / capture / configure / feedback` |
+| `oit_portal/config.py` | 配置与凭据加载/安全 TOML 写回（默认值 < `config.toml` < 环境变量） |
 | `oit_portal/tray.py` | Windows 托盘 App：Tkinter 账号设置、状态菜单、`TrayController` 后台线程；GUI 依赖延迟导入 |
 | `oit_portal/capture.py` | 一键抓包向导，自动发现协议并写入 `protocol.json` |
 | `oit_portal/discover.py` | 入口链路发现：统一处理 30x、`<meta refresh>`、JS `location.href=…` 三种跳转 |
@@ -17,21 +18,27 @@
 | `oit_portal/auth/eportal.py` | ePortal `login_sso.jsp` 上线检查。**协议常量在 `CAPTURED` 块** |
 | `oit_portal/auth/models.py` | `AuthError` 层级（含 `retryable`）、`PortalChallenge`、`OnlineResult` |
 | `oit_portal/auth/session_store.py` | SSO cookie 落盘免密复用（`session.json`，已 gitignore） |
-| `android/.../core/BackgroundServiceRuntime.kt` | 进程内存活标记：进程被杀后重开 App 能判断后台服务是否真的在跑 |
-| `android/.../core/NotificationStatusProvider.kt` | 系统通知可见性检测（应用开关 / 13+ 权限 / AppOps 三层） |
 | `oit_portal/protocol_overrides.py` | 把 `<配置目录>/protocol.json` 合并进 `CAPTURED` 命名空间（仅接受已有属性） |
 | `oit_portal/mobile_bridge.py` | 移动端桥接（路线B）：只暴露脱敏的探测/单次登录结果，不含 capture/daemon |
 | `oit_portal/mobile_sso.py` | 移动端首装 SSO 适配器：不读 protocol.json，仅当次页面可解析的 CryptoJS AES 表单才发加密密码，其余安全失败 |
+| `oit_portal/feedback.py` | App 反馈通道：载荷构造、脱敏诊断摘要、本机 JSONL 收集端（`feedback serve/list/export`）与可选飞书同步 |
+| `oit_portal/mobile_feedback.py` | 移动端 Python 反馈桥接（保留供回退与桌面/CLI 复用；Android 现默认走 `OpenFeedbackBridge.kt`） |
 | `oit_portal/daemon.py` | 常驻守护循环（探活 + 保活 + 退避）；可选 `stop_event / wake_event / on_update` 供托盘驱动，CLI 默认行为不变 |
-| `oit_portal/keepalive.py` | 心跳 |
+| `oit_portal/keepalive.py` | 心跳与退避/burst 等待时长策略 |
 | `oit_portal/htmlutil.py` | HTML/内联 JS 解析（找 AES key、表单字段、接口候选） |
 | `oit_portal/platform/{windows,termux}.py` | Windows HKCU 自启/Toast、Termux 平台细节（notify/wake_lock 为预留死代码；Linux 不需要 platform/linux.py） |
 | `oit_portal/paths.py` | 跨平台路径解析（APPDATA / XDG / 便携模式 / `OIT_PORTAL_HOME`） |
 | `oit_portal/log.py` | 日志：旋转文件 + 控制台；**永不记录明文密码与完整 cookie**（只用 `fingerprint()` 记 4 位） |
-| `tests/` | 300 个用例（无网络）。`FakeSession` + 多种 fixture 状态机 + Android UI/Windows 托盘/Linux 打包契约测试 |
+| `android/.../core/CampusNetworkBinder.kt` | Android 认证期间临时 `bindProcessToNetwork` 绑定物理 Wi-Fi（VPN 共存分流） |
+| `android/.../core/NetworkValidationGate.kt` | `onCapabilitiesChanged` 验证态翻转去抖闸门（防止信号波动高频触发状态校准） |
+| `android/.../core/BackgroundServiceRuntime.kt` | 进程内存活标记：进程被杀后重开 App 能判断后台服务是否真的在跑 |
+| `android/.../core/NotificationStatusProvider.kt` | 系统通知可见性检测（应用开关 / 13+ 权限 / AppOps 三层） |
+| `android/.../core/OpenFeedbackBridge.kt` | OpenFeedback 统一反馈服务桥接（离线本机队列 + WorkManager 自动补发 + `submissionId` 幂等去重） |
+| `tests/` | 440 个 pytest 用例（无网络，`FakeSession` + 状态机夹具 + 多端静态契约测试）；Android 另有 79 个 JUnit 单测 |
 | `scripts/install_windows_tray.ps1` | Windows 托盘普通用户安装（HKCU 自启 + 启动） |
 | `scripts/build_windows.ps1` | Windows 原生 PyInstaller 独立 exe 构建 |
 | `scripts/install_windows.ps1` | Windows CLI 备用安装（注册计划任务 + 启动） |
+| `scripts/uninstall_windows.ps1` | Windows 卸载（托盘 / 计划任务 / 包 / 残留清理，`-Purge` 删除配置） |
 | `scripts/install_termux.sh` | Termux 一键装 + 电池豁免 |
 | `scripts/install_linux.sh` | Linux 离线包/源码一键装（用户 venv + configure + systemd，拒绝 root） |
 | `scripts/build_linux.sh` | 按当前 Linux 架构构建含 wheelhouse 的 tar.gz 与 SHA256 |
@@ -41,8 +48,10 @@
 | `docs/capture-guide.md` | 抓包向导使用说明（用户文档） |
 | `docs/windows-setup.md` | Windows 托盘使用、exe 构建、CLI 备用部署和验收清单 |
 | `docs/linux-setup.md` | Linux 离线包使用、原生架构构建、systemd 与故障排查 |
+| `docs/termux-setup.md` | Android Termux 部署、Termux:Boot 与 SSID 加速指南 |
 | `docs/android-setup.md` | Android App 安装、账号、后台自动重连、厂商通知引导与故障排查 |
-| `android/` | 路线B Android 原生 App（Kotlin + Compose + Chaquopy）；Debug APK 已构建、第二轮真机功能验收通过，最新 UI/UX 改版待新一轮真机视觉验收，现状清单见 `android/README.md` |
+| `docs/app-feedback.md` | App 内嵌意见反馈通道（OpenFeedback 服务端配置、离线补发与后台管理） |
+| `android/` | 路线B Android 原生 App（Kotlin + Compose + Chaquopy）；Debug APK 已构建并通过五轮真机验收，现状清单见 `android/README.md` |
 
 ## 常用命令
 
@@ -54,9 +63,10 @@ oit-portal capture                     # 首次：协议自配置（校内未登
 oit-portal status                      # 探测三态
 oit-portal once                        # 完整跑一次登录流程（退出码 0/1/2/3 见 cli.py）
 oit-portal daemon                      # 守护循环
-oit-portal stop                         # 停 daemon
+oit-portal stop                        # 停 daemon
+oit-portal feedback serve              # 启动自托管反馈收集端（另有 list / export）
 bash scripts/build_linux.sh            # 当前架构 Linux 离线安装包
-python -m pytest                       # 跑全部 300 个用例（无网络）
+python -m pytest                       # 跑全部 pytest 用例（无网络）
 ```
 
 依赖：`requests`、`pycryptodome`（AES-128-CBC 复现，缺失时 `sso.py` 优雅降级）、`tomli`（仅 <3.11）。托盘可选依赖：`pystray`、`Pillow`；Tkinter 使用 Python 标准库。
@@ -72,7 +82,7 @@ python -m pytest                       # 跑全部 300 个用例（无网络）
 
 **编辑协议相关代码的纪律**：
 - 改 `sso.py` / `eportal.py` 顶部 `CAPTURED` 块时，**只改值、保持键名稳定**（未知键会被 overrides 忽略）。
-- AES key/iv 必须**每次页面动态从内联脚本提取**（`htmlutil.find_aes`），不要把常量值写进 `protocol.json`——实测多次登录 key 都变。
+- AES key/iv 必须**每次页面动态从内联脚本提取**（`htmlutil.find_aes`），运行时始终以当次页面内联 key 为准（`protocol.json` 里抓包时的 `aes_key` 仅作无内联脚本页面时的兜底）——实测多次登录 key 都变。
 - 已确认的协议项 → 在 `docs/protocol-notes.md` 对应行把状态改成 `✅ 已确认` + 日期，不要只改代码不更新文档。
 - 改完 `sso.py` / `eportal.py` 的协议相关逻辑，**同步更新 `tests/test_capture_wizard.py` 或对应测试夹具**。
 
@@ -111,7 +121,7 @@ python -m pytest                       # 跑全部 300 个用例（无网络）
 |---|---|
 | `analyze_form()` | 表单解析（含 form-without-action 兜底、hidden 字段识别）|
 | `scan_login_endpoints()` | 扫描页面内联 + 外链 JS 找接口候选（5 种 regex：axios/fetch/jQuery/路径关键字/URL 字面量）|
-| `_HEURISTIC_ENDPOINTS` | 312 个常见 widget 组合（4 layers × 13 classes × 6 actions）+ 标准 OAuth2/SSO 路径 |
+| `_HEURISTIC_ENDPOINTS` | 336 个常见 widget 组合（4 layers × 14 classes × 6 actions）+ 标准 OAuth2/SSO 路径 |
 | `_looks_like_spa_catchall()` | POST 返回的 HTML 首段与登录页一致时识别为「SPA 路由兜底」并跳过 |
 | `_extract_vue_templates()` | 提取 `<script type="text/x-template">` 块，form action 经常藏这里 |
 | `_TOKEN_FIELD_HINTS` | 探测 `fingerprint` / `verify_token` / `verify_code` 等动态 token 字段名 |
@@ -120,14 +130,14 @@ python -m pytest                       # 跑全部 300 个用例（无网络）
 
 ## 安全 / 隐私硬约束
 
-1. **配置文件不能入库**：`.gitignore` 已屏蔽 `config.toml` / `credentials.toml` / `session.json` / `*.log` / `*.har`。任何「记录凭证」的代码改动都要重新审视 `.gitignore` 是否需要加新模式。
+1. **配置文件不能入库**：`.gitignore` 已屏蔽 `config.toml` / `credentials.toml` / `session.json` / `protocol.json` / `capture-report.txt` / `feedback.jsonl` / `*.log` / `*.har`。任何「记录凭证」的代码改动都要重新审视 `.gitignore` 是否需要加新模式。
 2. **日志脱敏**：所有日志里出现的密码、cookie、token，必须走 `log.fingerprint(secret)`（只打前 4 位 + 长度）。**不要**在 logger 调用里直接拼接原始 secret。
 3. **HTTP 直连不代理**：所有认证 Session 统一走 `network.create_session()`，强制 `trust_env = False`；可选 `SourceAddressAdapter` 只绑定物理网卡，不修改 VPN/系统路由。
 4. **密码不在主配置文件**：`credentials.toml`（0600 权限）或 `OIT_PORTAL_PASSWORD` 环境变量。模板见 `config.example.toml`。
 
 ## 跨平台路径
 
-`paths.resolve_paths()` 优先级：`OIT_PORTAL_HOME` 环境变量 → 便携模式（与 `config.toml` 同目录）→ 平台默认（Win `%APPDATA%\oit-portal`，其余 `~/.config/oit-portal`，Termux 日志走 `XDG_STATE_HOME`）。
+`paths.resolve_paths()` 优先级：`OIT_PORTAL_HOME` 环境变量 → 便携模式（与 `config.toml` 同目录）→ 平台默认（Win `%APPDATA%\oit-portal`，其余 `~/.config/oit-portal`，所有平台日志均位于 `<home>/logs/oit-portal.log`，不可写时降级到 `$TMPDIR/oit-portal/`）。
 
 **改路径相关代码必须同时**：
 - 检查 `is_termux()`（`TERMUX_VERSION` env）

@@ -50,16 +50,18 @@ class KeepalivePolicy:
             self._recovery_since = None
             return jittered(p.offline_interval_sec, p.jitter_ratio)
 
+        # 离线 → 现在的 CAPTIVE/FAILED 转换（policy.mark_recovery 由 daemon 触发）
+        # burst 期间（recovery 窗口内且尚未触及深度退避阈值）用 5s 短间隔，让刚连上 WiFi 时秒级重试
+        if (self.in_burst(now) and online_since is None
+                and consecutive_failures < r.max_attempts
+                and outcome in (FlowOutcome.FAILED,)):
+            return jittered(p.recovery_burst_interval_sec, p.jitter_ratio)
+
         if outcome in FAILURE_OUTCOMES:
             if consecutive_failures >= r.max_attempts:
                 return jittered(r.deep_backoff_sec, p.jitter_ratio)
             expo = r.backoff_base_sec * (2 ** max(0, consecutive_failures - 1))
             return jittered(min(expo, r.backoff_cap_sec), p.jitter_ratio)
-
-        # 离线 → 现在的 CAPTIVE/ONLINE 转换（policy.mark_recovery 由 daemon 触发）
-        # burst 期间（recovery 窗口内）用 5s 短间隔
-        if self.in_burst(now) and online_since is None:
-            return jittered(p.recovery_burst_interval_sec, p.jitter_ratio)
 
         # ONLINE / LOGGED_IN：刚上线短窗内密集复查，稳定后放慢
         base = p.online_interval_sec

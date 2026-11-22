@@ -32,13 +32,26 @@ logger = get_logger()
 CATEGORY_SUGGESTION = "suggestion"
 CATEGORY_ISSUE = "issue"
 CATEGORY_OTHER = "other"
+CATEGORY_BUG = "bug"
+CATEGORY_FEATURE = "feature"
+CATEGORY_EXPERIENCE = "experience"
 
-FEEDBACK_CATEGORIES = (CATEGORY_SUGGESTION, CATEGORY_ISSUE, CATEGORY_OTHER)
+FEEDBACK_CATEGORIES = (
+    CATEGORY_SUGGESTION,
+    CATEGORY_ISSUE,
+    CATEGORY_OTHER,
+    CATEGORY_BUG,
+    CATEGORY_FEATURE,
+    CATEGORY_EXPERIENCE,
+)
 
 CATEGORY_LABELS = {
     CATEGORY_SUGGESTION: "建议",
     CATEGORY_ISSUE: "问题",
     CATEGORY_OTHER: "其他",
+    CATEGORY_BUG: "问题",
+    CATEGORY_FEATURE: "功能建议",
+    CATEGORY_EXPERIENCE: "体验问题",
 }
 
 _MAX_DIAGNOSTIC_LINES = 10
@@ -52,7 +65,7 @@ _SENSITIVE_LINE_PATTERNS = (
     re.compile(r"(账号|密码|Cookie|口令|学号|工号)"),
 )
 
-# 允许保留的状态类事件前缀：只保留连接与登录的状态结论。
+# 允许保留的状态类事件关键词：只保留连接与登录的状态结论。
 _ALLOWED_DIAGNOSTIC_PREFIXES = (
     "手动刷新",
     "登录结果",
@@ -63,6 +76,9 @@ _ALLOWED_DIAGNOSTIC_PREFIXES = (
     "系统通知",
     "检测到",
     "后台服务已停止",
+    "后台自动重连",
+    "本地会话",
+    "前台自动刷新",
 )
 
 
@@ -142,10 +158,14 @@ def build_feedback_payload(
     }
 
 
+_TIMESTAMP_PREFIX_RE = re.compile(r"^\d{2}:\d{2}:\d{2}\s+")
+
+
 def sanitize_diagnostics(raw: str | None) -> str:
     """把 App 的会话事件压成可外发的脱敏摘要。
 
     只保留状态类事件；任何含账号、凭据线索或完整 URL 的行整行丢弃。
+    支持不带时间戳或带 ``HH:mm:ss `` 时间戳前缀的会话事件行。
     """
     if not raw:
         return ""
@@ -156,7 +176,8 @@ def sanitize_diagnostics(raw: str | None) -> str:
             continue
         if any(pattern.search(text) for pattern in _SENSITIVE_LINE_PATTERNS):
             continue
-        if not text.startswith(_ALLOWED_DIAGNOSTIC_PREFIXES):
+        body = _TIMESTAMP_PREFIX_RE.sub("", text)
+        if not body.startswith(_ALLOWED_DIAGNOSTIC_PREFIXES):
             continue
         kept.append(text[:_MAX_DIAGNOSTIC_LINE_LENGTH])
         if len(kept) >= _MAX_DIAGNOSTIC_LINES:
@@ -165,10 +186,11 @@ def sanitize_diagnostics(raw: str | None) -> str:
 
 
 class FeedbackStore:
-    """反馈的本地权威副本：JSON Lines 追加写。"""
+    """反馈的本地权威副本：JSON Lines 追加写（线程安全）。"""
 
     def __init__(self, path: Path):
         self._path = Path(path)
+        self._lock = threading.Lock()
 
     @property
     def path(self) -> Path:
@@ -179,12 +201,13 @@ class FeedbackStore:
             category=str(payload.get("category", CATEGORY_OTHER)),
             content=str(payload.get("content", "")),
             app_version=str(payload.get("app_version", "")),
-            submitted_at=_now_iso(),
+            submitted_at=str(payload.get("submitted_at") or _now_iso()),
             diagnostics=payload.get("diagnostics") or None,
         )
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        with self._path.open("a", encoding="utf-8") as handle:
-            handle.write(record.to_json_line() + "\n")
+        with self._lock:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            with self._path.open("a", encoding="utf-8") as handle:
+                handle.write(record.to_json_line() + "\n")
         return record
 
 
@@ -269,7 +292,10 @@ def _is_feishu_group_bot(url: str) -> bool:
 
 def _is_feishu_table_webhook(url: str) -> bool:
     """多维表格 webhook：飞书域名且不是群机器人地址。"""
-    return "feishu.cn" in url and not _is_feishu_group_bot(url)
+    from urllib.parse import urlsplit
+    host = (urlsplit(url).hostname or "").lower()
+    is_feishu_host = host == "feishu.cn" or host.endswith(".feishu.cn")
+    return is_feishu_host and not _is_feishu_group_bot(url)
 
 
 def _feishu_signature(secret: str, timestamp: int) -> str:
@@ -306,14 +332,22 @@ def _build_channel_request(
         return body, headers
 
     if _is_feishu_table_webhook(url):
+        category = str(payload.get("category", ""))
+        submitted_at = str(payload.get("submitted_at") or "")
+        submitted_ts = payload.get("submitted_ts")
+        if not submitted_ts and submitted_at:
+            try:
+                submitted_ts = int(datetime.fromisoformat(submitted_at).timestamp())
+            except ValueError:
+                submitted_ts = 0
         body = {
             "content": str(payload.get("content", "")),
-            "category": str(payload.get("category", "")),
-            "category_label": str(payload.get("category_label", "")),
+            "category": category,
+            "category_label": str(payload.get("category_label") or CATEGORY_LABELS.get(category, "")),
             "diagnostics": str(payload.get("diagnostics") or ""),
             "app_version": str(payload.get("app_version") or ""),
-            "submitted_at": str(payload.get("submitted_at") or ""),
-            "submitted_ts": payload.get("submitted_ts") or 0,
+            "submitted_at": submitted_at,
+            "submitted_ts": submitted_ts or 0,
         }
         if cleaned_secret:
             headers["Authorization"] = f"Bearer {cleaned_secret}"
@@ -404,6 +438,7 @@ def forward_feedback_to_feishu(
         raise RuntimeError("无法连接飞书 webhook") from exc
     if response.status_code >= 400:
         raise RuntimeError(f"飞书 webhook 拒绝了这次同步（HTTP {response.status_code}）")
+    _raise_on_channel_failure(response)
 
 
 def _render_feishu_text(payload: dict[str, Any]) -> str:
@@ -439,10 +474,14 @@ class FeedbackCollectorConfig:
         return cls.max_body_bytes
 
 
+_MAX_DRAIN_BYTES = 4 * 1024 * 1024
+
+
 class _FeedbackRequestHandler(BaseHTTPRequestHandler):
     """处理 ``POST /feedback``。"""
 
     server_version = "OITFeedback/1.0"
+    timeout = 10
 
     @property
     def _collector(self) -> "FeedbackCollector":
@@ -461,8 +500,8 @@ class _FeedbackRequestHandler(BaseHTTPRequestHandler):
             self._respond(400, {"ok": False, "error": "invalid body size"})
             return
         if length > self._collector.config.max_body_bytes:
-            # 超限时**先读完请求体再响应**：客户端还在往这写，
-            # 服务端若提前应答就会把连接 RST 掉，客户端拿到的是 BrokenPipe
+            # 超限时**先读完请求体再响应**（上限 4MB 防恶意超大 Content-Length DoS）：
+            # 客户端还在往这写，服务端若提前应答就会把连接 RST 掉，客户端拿到的是 BrokenPipe
             # 而不是干净的 400（2026-11-04 实测复现）。
             self._drain(length)
             self._respond(400, {"ok": False, "error": "invalid body size"})
@@ -477,7 +516,7 @@ class _FeedbackRequestHandler(BaseHTTPRequestHandler):
             self._respond(400, {"ok": False, "error": "invalid payload"})
             return
         try:
-            build_feedback_payload(
+            payload = build_feedback_payload(
                 category=str(data.get("category", "")),
                 content=str(data.get("content", "")),
                 diagnostics=data.get("diagnostics"),
@@ -487,8 +526,8 @@ class _FeedbackRequestHandler(BaseHTTPRequestHandler):
             self._respond(400, {"ok": False, "error": str(exc)})
             return
 
-        record = self._collector.store.append(data)
-        self._collector.forward_to_feishu(record.to_dict())
+        record = self._collector.store.append(payload)
+        self._collector.forward_to_feishu(payload)
         self._respond(200, {"ok": True, "id": record.submitted_at})
 
     def log_message(self, format: str, *args: Any) -> None:
@@ -496,12 +535,10 @@ class _FeedbackRequestHandler(BaseHTTPRequestHandler):
         return
 
     def _drain(self, length: int) -> None:
-        """读完并丢弃请求体。
-
-        必须读完**全部**：只读一部分就响应，客户端仍在写，
-        一样会被 RST（2026-11-04 实测）。读完再应答才能拿到干净的 400。
-        """
-        remaining = length
+        """读完并丢弃请求体（有上限保护，超上限关闭连接防 DoS）。"""
+        remaining = min(length, _MAX_DRAIN_BYTES)
+        if length > _MAX_DRAIN_BYTES:
+            self.close_connection = True
         try:
             while remaining > 0:
                 chunk = self.rfile.read(min(remaining, 65536))
@@ -556,7 +593,10 @@ class FeedbackCollector:
         """转发到飞书；未配置或失败都不影响已落盘的反馈。"""
         if not self.config.feishu_webhook_url:
             return
-        session = self._session_factory() if self._session_factory else requests.Session()
+        from .config import Config
+        from .network import create_session
+        owns_session = self._session_factory is None
+        session = self._session_factory() if self._session_factory else create_session(Config())
         try:
             forward_feedback_to_feishu(
                 session=session,
@@ -565,6 +605,12 @@ class FeedbackCollector:
             )
         except Exception as exc:
             logger.warning("飞书同步失败（反馈已落盘）：%s", type(exc).__name__)
+        finally:
+            if owns_session and hasattr(session, "close"):
+                try:
+                    session.close()
+                except Exception:  # noqa: BLE001
+                    pass
 
     def serve_forever(self) -> None:
         self._server.serve_forever()
@@ -572,11 +618,3 @@ class FeedbackCollector:
     def shutdown(self) -> None:
         self._server.shutdown()
         self._server.server_close()
-
-
-@dataclass
-class FeedbackCollectorRuntime:
-    """收集端运行上下文（供 CLI 使用）。"""
-
-    collector: FeedbackCollector
-    store_path: Path = field(default=Path("feedback.jsonl"))

@@ -82,8 +82,8 @@ private fun AccountRow(
     onDelete: (String) -> Unit,
 ) {
     var editing by remember(account.id) { mutableStateOf(false) }
-    var alias by remember(account.id) { mutableStateOf(account.alias) }
-    var boundSsid by remember(account.id) { mutableStateOf(account.boundSsid) }
+    var alias by remember(account.id, account.alias) { mutableStateOf(account.alias) }
+    var boundSsid by remember(account.id, account.boundSsid) { mutableStateOf(account.boundSsid) }
 
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(

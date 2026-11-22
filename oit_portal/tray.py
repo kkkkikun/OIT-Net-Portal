@@ -62,7 +62,8 @@ class TrayController:
                                 self._desired_running)
 
     def add_listener(self, listener: Callable[[TraySnapshot], None]) -> None:
-        self._listeners.append(listener)
+        with self._lock:
+            self._listeners.append(listener)
         listener(self.snapshot())
 
     def _set_state(self, state: str, detail: str) -> None:
@@ -241,7 +242,8 @@ class TrayApplication:
         try:
             set_startup(not startup_enabled())
         except OSError as exc:
-            self._on_ui(lambda: self._show_error("开机自启设置失败", str(exc)))
+            msg = str(exc)
+            self._on_ui(lambda: self._show_error("开机自启设置失败", msg))
         if self.icon is not None:
             self.icon.update_menu()
 

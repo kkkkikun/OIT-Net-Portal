@@ -34,6 +34,8 @@ def apply_overrides(namespace: SimpleNamespace, section: str,
     except (json.JSONDecodeError, OSError) as exc:
         logger.warning("protocol.json 解析失败（忽略）：%s", exc)
         return []
+    if not isinstance(data, dict):
+        return []
     section_data = data.get(section)
     if not isinstance(section_data, dict):
         return []

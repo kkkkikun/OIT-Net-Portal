@@ -63,24 +63,23 @@ def test_jitter_bounds():
 
 
 def test_burst_interval_after_recovery():
-    """网络恢复后 burst 窗口内 5s 探一次（不再是 30s offline 间隔）。"""
-    p = policy()
+    """网络恢复后 burst 窗口内用 recovery_burst_interval_sec（即使已连续失败 1~4 次，也不走 10s/20s/40s 指数退避）。"""
+    p = policy(probe={"recovery_burst_interval_sec": 3})
     p.mark_recovery(now=1000.0)
-    # 刚 mark_recovery，未上线（online_since=None）→ 应返回 burst 间隔
-    delay = p.next_delay(outcome=FlowOutcome.FAILED, consecutive_failures=0,
-                        online_since=None, now=1001.0)
-    assert delay == 5  # 抖动已关闭
+    # 即使 consecutive_failures=3（常规退避应为 20s），burst 窗口内仍返回 3s
+    delay = p.next_delay(outcome=FlowOutcome.FAILED, consecutive_failures=3,
+                         online_since=None, now=1001.0)
+    assert delay == 3  # 抖动已关闭
 
 
 def test_burst_window_expires_to_normal():
-    """burst 窗口（默认 60s）过期后回到正常 captive 行为。"""
-    p = policy()
+    """burst 窗口（默认 60s）过期后回到正常指数退避行为。"""
+    p = policy(probe={"recovery_burst_interval_sec": 3})
     p.mark_recovery(now=1000.0)
-    # 65s 后 burst 窗口已过
-    delay = p.next_delay(outcome=FlowOutcome.FAILED, consecutive_failures=0,
-                        online_since=None, now=1065.0)
-    # FAILED 在 FAILURE_OUTCOMES，consecutive_failures=0 → 走 backoff_base_sec=5
-    assert delay == 5
+    # 65s 后 burst 窗口已过，consecutive_failures=3 → 走指数退避 5 * 2^2 = 20s
+    delay = p.next_delay(outcome=FlowOutcome.FAILED, consecutive_failures=3,
+                         online_since=None, now=1065.0)
+    assert delay == 20
 
 
 def test_burst_resets_on_no_network():
@@ -100,20 +99,19 @@ def test_burst_does_not_apply_when_online():
     p.mark_recovery(now=1000.0)
     # 已在线（online_since=1005，刚上线）
     delay = p.next_delay(outcome=FlowOutcome.LOGGED_IN, consecutive_failures=0,
-                        online_since=1005.0, now=1010.0)
+                         online_since=1005.0, now=1010.0)
     # 在线 5s < 300s post_online_window → 15s
     assert delay == 15
 
 
 def test_burst_recovery_then_burst_via_ssid_pattern():
     """完整路径：mark_recovery → burst 探 → 在线 → 正常。"""
-    p = policy()
+    p = policy(probe={"recovery_burst_interval_sec": 3})
     # T=0: mark_recovery（SSID 触发或 offline→captive 触发）
     p.mark_recovery(now=0.0)
-    # T=1: 探 → 还在 captive（online_since=None，FAILED 不在 burst 计数）
-    # burst 窗口 60s 内 + online_since=None → 5s
-    assert p.next_delay(outcome=FlowOutcome.FAILED, consecutive_failures=0,
-                        online_since=None, now=1.0) == 5
+    # T=1: 探 → 还在 captive（online_since=None，consecutive_failures=2 仍走 burst 3s 而非 10s）
+    assert p.next_delay(outcome=FlowOutcome.FAILED, consecutive_failures=2,
+                        online_since=None, now=1.0) == 3
     # T=2: 探 → 登录成功（online_since=2）
     p.next_delay(outcome=FlowOutcome.LOGGED_IN, consecutive_failures=0,
                  online_since=2.0, now=2.0)

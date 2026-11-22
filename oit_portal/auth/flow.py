@@ -84,7 +84,8 @@ class AuthFlow:
             from ..discover import follow_entry
             try:
                 entry = follow_entry(self.session, self.cfg, [],
-                                     page_url=pr.probe_url, page_body=pr.body)
+                                     page_url=pr.probe_url, page_body=pr.body,
+                                     stop_at_authorize=True)
                 challenge = entry.challenge
             except Exception:  # noqa: BLE001 - 发现失败按无挑战处理
                 challenge = None
@@ -98,8 +99,8 @@ class AuthFlow:
                     challenge.client_id[:8], challenge.eportal_base)
 
         auth = self._obtain_code(challenge, allow_password=allow_password)
-        if isinstance(auth, FlowResult):  # 失败分支的哨兵返回
-            return auth
+        if isinstance(auth, FlowResult):  # 失败分支的哨兵返回（清空失效的持久化会话）
+            return self._persist_session(auth)
 
         try:
             result = self.eportal.online(auth, challenge)

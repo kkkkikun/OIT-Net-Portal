@@ -33,16 +33,24 @@ class AndroidWifiIdentityProvider(context: Context) : WifiIdentityProvider {
         }
     }
 
-    private fun readRawSsid(): String? =
+    private fun readRawSsid(): String? {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val connectivity = appContext.getSystemService(ConnectivityManager::class.java)
-            val network = connectivity?.activeNetwork ?: return null
-            val capabilities = connectivity.getNetworkCapabilities(network) ?: return null
-            (capabilities.transportInfo as? WifiInfo)?.ssid
-        } else {
-            @Suppress("DEPRECATION")
-            appContext.getSystemService(WifiManager::class.java)?.connectionInfo?.ssid
+            val wifiNetwork = connectivity?.allNetworks?.firstOrNull { network ->
+                connectivity.getNetworkCapabilities(network)?.let { caps ->
+                    caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) &&
+                        !caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN)
+                } == true
+            } ?: connectivity?.activeNetwork
+            val capabilities = wifiNetwork?.let { connectivity?.getNetworkCapabilities(it) }
+            val transportSsid = (capabilities?.transportInfo as? WifiInfo)?.ssid
+            if (!transportSsid.isNullOrBlank() && transportSsid != WifiManager.UNKNOWN_SSID) {
+                return transportSsid
+            }
         }
+        @Suppress("DEPRECATION")
+        return appContext.getSystemService(WifiManager::class.java)?.connectionInfo?.ssid
+    }
 
     companion object {
         /** 当前系统版本读取 SSID 所需的运行时权限。 */

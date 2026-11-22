@@ -9,6 +9,6 @@ try:
     __version__ = _pkg_version("oit-portal")
 except Exception:
     # 未安装（源码树直跑）或极老 Python：回落到与 pyproject.toml 一致的字面量
-    __version__ = "1.0.0"
+    __version__ = "1.0.1"
 
 __all__ = ["__version__"]

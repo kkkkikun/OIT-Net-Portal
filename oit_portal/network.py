@@ -82,31 +82,38 @@ def _linux_source_ip() -> str | None:
 def _windows_source_ip() -> str | None:
     try:
         result = subprocess.run(
-            ["ipconfig"], capture_output=True, text=True, timeout=4, check=False,
+            ["ipconfig"], capture_output=True, text=True,
+            errors="replace", timeout=4, check=False,
         )
     except (OSError, subprocess.SubprocessError):
         return None
     if result.returncode != 0:
         return None
     candidates = []
-    for block in re.split(r"\r?\n\r?\n", result.stdout):
-        heading = block.splitlines()[0] if block.splitlines() else ""
+    # 真实 Windows ipconfig 在顶格的适配器标题行与缩进的属性行之间有一个空行（\r\n\r\n）；
+    # 按「顶格非空白字符开头的行」切分，才能把标题和下方的 IPv4/网关留在同一块里。
+    for block in re.split(r"\r?\n(?=\S)", result.stdout.strip()):
+        heading = block.splitlines()[0].strip() if block.splitlines() else ""
         if not _physical_name(heading):
             continue
         match = re.search(
             r"IPv4[^\r\n:]*:\s*((?:\d{1,3}\.){3}\d{1,3})", block, re.I)
-        gateway = re.search(r"(?:Gateway|网关)[^\r\n]*((?:\d{1,3}\.){3}\d{1,3})", block, re.I)
+        # 双栈网络下 Default Gateway 首行可能是 IPv6（fe80::...），第二行缩进才是 IPv4 网关
+        gateway = re.search(
+            r"(?:Gateway|网关)[^\r\n:]*:\s*(?:[0-9a-fA-F:%]+\r?\n\s*)?((?:\d{1,3}\.){3}\d{1,3})",
+            block, re.I)
         address = _usable_address(match.group(1)) if match else None
         if address and gateway:
-            candidates.append((0 if any(x in heading.lower() for x in ("wi-fi", "wifi", "wlan")) else 1,
+            candidates.append((0 if any(x in heading.lower() for x in ("wi-fi", "wifi", "wlan", "无线")) else 1,
                                heading, address))
     return min(candidates)[2] if candidates else None
 
 
 def physical_source_ip() -> str | None:
+    from .paths import is_termux
     if sys.platform == "win32":
         return _windows_source_ip()
-    if sys.platform == "linux":
+    if sys.platform == "linux" and not is_termux():
         return _linux_source_ip()
     return None
 

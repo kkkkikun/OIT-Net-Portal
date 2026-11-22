@@ -15,9 +15,9 @@ command -v python >/dev/null || pkg install -y python
 echo "==> [2/6] 安装 oit-portal 及依赖"
 pip install --quiet .
 
-# ── 2. 配置文件 ─────────────────────────────────────────────
+# ── 2. 配置文件与账号密码 ───────────────────────────────────
 CFG_DIR="${HOME}/.config/oit-portal"
-mkdir -p "$CFG_DIR"
+mkdir -p "$CFG_DIR/logs"
 echo "==> [3/6] 生成配置 $CFG_DIR"
 if [ ! -f "$CFG_DIR/config.toml" ]; then
   cp "$(dirname "$0")/../config.example.toml" "$CFG_DIR/config.toml"
@@ -26,18 +26,8 @@ else
   echo "    config.toml 已存在，保留"
 fi
 
-read -rp "请输入校园网账号（学号/工号，直接回车保持不变）: " USERNAME
-if [ -n "$USERNAME" ]; then
-  sed -i "s/^username = .*/username = \"$USERNAME\"/" "$CFG_DIR/config.toml"
-fi
-
-echo "==> [4/6] 写入凭据（密码只存本机，权限 600）"
-read -rsp "请输入校园网密码（输入不回显）: " PASSWORD; echo
-# 用 chmod 直接收紧权限（不用 umask 177，避免 umask 污染到
-# 后续 oit-portal 子进程导致日志目录创建失败）
-printf 'password = "%s"\n' "$PASSWORD" > "$CFG_DIR/credentials.toml"
-chmod 600 "$CFG_DIR/credentials.toml"
-unset PASSWORD
+echo "==> [4/6] 配置校园网账号与密码（密码只存本机，权限 600）"
+OIT_PORTAL_HOME="$CFG_DIR" oit-portal configure
 
 # ── 3. 开机自启（Termux:Boot）──────────────────────────────
 echo "==> [5/6] 部署开机启动脚本"

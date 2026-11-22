@@ -103,20 +103,20 @@ def load_config(config_path: Path | None = None,
             return _toml.load(fh)
 
     data = _load_toml(config_path)
-    if "account" in data:
+    if isinstance(data.get("account"), dict):
         cfg.username = data["account"].get("username", cfg.username)
-    if "probe" in data:
+    if isinstance(data.get("probe"), dict):
         _apply_section(cfg.probe, data["probe"])
-    if "retry" in data:
+    if isinstance(data.get("retry"), dict):
         _apply_section(cfg.retry, data["retry"])
-    if "keepalive" in data:
+    if isinstance(data.get("keepalive"), dict):
         _apply_section(cfg.keepalive, data["keepalive"])
-    if "advanced" in data:
+    if isinstance(data.get("advanced"), dict):
         _apply_section(cfg.advanced, data["advanced"])
 
     # 凭据独立文件，与配置分离
     creds = _load_toml(credentials_path)
-    password = creds.get("password")
+    password = creds.get("password") if isinstance(creds, dict) else None
 
     # 环境变量覆盖
     cfg.username = os.environ.get(ENV_USERNAME, cfg.username)
@@ -143,7 +143,8 @@ def _toml_string(value: str) -> str:
 
 def _update_toml_section(path: Path, section_name: str, values: dict[str, str]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    lines = (path.read_text(encoding="utf-8") if path.is_file() else "").splitlines(keepends=True)
+    raw_lines = (path.read_text(encoding="utf-8") if path.is_file() else "").splitlines()
+    lines = [f"{line}\n" for line in raw_lines]
     section = None
     section_start = None
     found = set()
@@ -171,17 +172,31 @@ def _update_toml_section(path: Path, section_name: str, values: dict[str, str]) 
     path.write_text("".join(lines), encoding="utf-8")
 
 
+def _write_private_text(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if os.name != "nt":
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(content)
+        except Exception:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            raise
+        path.chmod(0o600)
+    else:
+        path.write_text(content, encoding="utf-8")
+
+
 def save_account(config_path: Path, credentials_path: Path,
                  username: str, password: str) -> None:
     username = username.strip()
     if not username or not password:
         raise ValueError("账号和密码不能为空")
     _update_toml_section(config_path, "account", {"username": _toml_string(username)})
-    credentials_path.parent.mkdir(parents=True, exist_ok=True)
-    credentials_path.write_text(
-        f"password = {_toml_string(password)}\n", encoding="utf-8")
-    if os.name != "nt":
-        credentials_path.chmod(0o600)
+    _write_private_text(credentials_path, f"password = {_toml_string(password)}\n")
 
 
 def save_network_settings(config_path: Path, bypass_vpn: bool,

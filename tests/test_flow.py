@@ -275,3 +275,50 @@ def test_need_credentials_when_no_password(cfg, fake_session, monkeypatch):
                  lambda: ProbeResult(ProbeStatus.CAPTIVE, redirect_url=AUTHORIZE_URL))
     result = flow.ensure_online()
     assert result.outcome is FlowOutcome.NEED_CREDENTIALS
+
+
+def test_login_rejected_clears_persisted_session(cfg, fake_session, monkeypatch, tmp_path):
+    """账密被拒（或验证码/缺凭据）时必须清除磁盘上失效的 session.json。"""
+    _captured_defaults(monkeypatch, login_endpoint="/auth/user/login")
+    session_file = tmp_path / "session.json"
+    session_file.write_text('[{"name": "SID", "value": "old"}]', encoding="utf-8")
+    fake_session.add_url(AUTHORIZE_URL, FakeResponse(200, text="<input name=password>"))
+    fake_session.add(lambda u, m: m == "POST",
+                     FakeResponse(200, text='{"msg":"账号或密码错误"}'))
+
+    flow = _flow(fake_session, cfg,
+                 lambda: ProbeResult(ProbeStatus.CAPTIVE, redirect_url=AUTHORIZE_URL),
+                 session_path=session_file)
+    result = flow.ensure_online()
+    assert result.outcome is FlowOutcome.LOGIN_REJECTED
+    assert not session_file.exists()
+
+
+def test_actionless_form_preserves_current_challenge_query_and_direct_code(
+        cfg, fake_session, monkeypatch):
+    """无 action 表单（C2.1）+ POST 302 直接回跳 login_sso.jsp?code=...（C3.1）：
+    即使 protocol.json 里存了抓包当次的旧 query，运行时也必须提交到当次挑战的 authorize URL，
+    并从 POST 302 Location 直接提取 code 交给 ePortal 上线。"""
+    stale_endpoint = (
+        "/auth/oauth/authorize?response_type=code&client_id=cli"
+        "&redirect_uri=http%3A%2F%2F172.16.11.54%2Feportal%2Flogin_sso.jsp%3Fwlanuserip%3DSTALE_OLD"
+    )
+    _captured_defaults(monkeypatch, login_endpoint=stale_endpoint)
+    actionless_form = '<form method="POST"><input name="username"><input name="password" type="hidden"></form>'
+    states = iter([
+        ProbeResult(ProbeStatus.CAPTIVE, redirect_url=AUTHORIZE_URL),
+        ProbeResult(ProbeStatus.ONLINE),
+    ])
+    fake_session.add(lambda u, m: m == "GET" and u == AUTHORIZE_URL,
+                     FakeResponse(200, text=actionless_form, url=AUTHORIZE_URL),
+                     FakeResponse(200, text=actionless_form, url=AUTHORIZE_URL))
+    fake_session.add(lambda u, m: m == "POST" and u == AUTHORIZE_URL,
+                     FakeResponse(302, headers={"Location": EPORTAL_CODE_URL}))
+    fake_session.add_url(EPORTAL_CODE_URL, FakeResponse(200, text=SUCCESS_PAGE))
+
+    flow = _flow(fake_session, cfg, lambda: next(states))
+    result = flow.ensure_online()
+    assert result.outcome is FlowOutcome.LOGGED_IN
+    assert result.via == "password"
+    assert result.user_index == "aabb0011"
+    assert fake_session.posts[0][0] == AUTHORIZE_URL
