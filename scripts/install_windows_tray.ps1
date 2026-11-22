@@ -14,14 +14,9 @@ Write-Host "==> [1/4] 检查运行环境" -ForegroundColor Cyan
 $ErrorActionPreference = "Continue"
 & $Python -c "import tkinter" 2>&1 | Out-Null
 $hasTk = ($LASTEXITCODE -eq 0)
-& $Python -c "import pystray, PIL" 2>&1 | Out-Null
-$hasTrayDeps = ($LASTEXITCODE -eq 0)
 $ErrorActionPreference = "Stop"
 if (-not $hasTk) {
     Fail "当前 Python 缺少 tkinter，托盘界面无法启动。`n    tkinter 不是 pip 包：请重新运行 Python 安装程序 → Modify → 勾选 tcl/tk and IDLE → 重新安装后再执行本脚本。`n    不想用托盘界面的话，可改用命令行：$Python -m oit_portal.cli configure"
-}
-if (-not $hasTrayDeps) {
-    Fail "缺少托盘依赖，请先执行：& '$Python' -m pip install '.[tray]'"
 }
 
 Write-Host "==> [2/4] 安装托盘 App 及依赖" -ForegroundColor Cyan
@@ -41,6 +36,13 @@ if ($LASTEXITCODE -ne 0) {
     & $Python -m pip install --quiet --no-build-isolation ".[tray]"
 }
 if ($LASTEXITCODE -ne 0) { Fail "pip install 失败" }
+$ErrorActionPreference = "Continue"
+& $Python -c "import pystray, PIL" 2>&1 | Out-Null
+$hasTrayDeps = ($LASTEXITCODE -eq 0)
+$ErrorActionPreference = "Stop"
+if (-not $hasTrayDeps) {
+    Fail "缺少托盘依赖，请先执行：& '$Python' -m pip install '.[tray]'"
+}
 
 $exe = (Get-Command "oit-portal-tray.exe" -ErrorAction SilentlyContinue).Source
 if (-not $exe) {

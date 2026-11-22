@@ -10,19 +10,19 @@
 - 诊断页独立展示当前状态、提示和最多 10 条会话内脱敏事件。
 - 桌面图标：自适应启动图标（`mipmap-anydpi-v26`，品牌蓝渐变底 + 白色 Wi-Fi 信号前景），同时提供圆角变体与 Android 13 主题图标（monochrome）；minSdk 26 无需旧版 PNG 兜底。
 - UI 仅调用现有 ViewModel 回调，不新增 UI 依赖，不改 Python 认证核心或凭据存储策略。
-- 详细提案、设计与验收要求见 `openspec/changes/android-ui-refresh/`。
+- 详细提案、设计与验收要求见 `openspec/changes/archive/2026-10-27-android-ui-refresh/`。
 
 ## 当前源码能力
 
 - `MainActivity` 初始仍使用 `UnavailablePortalCoreBridge`，只在用户显式提交账号和密码后，通过捕获 Application Context 的惰性工厂创建 `ChaquopyPortalCoreBridge`。
-- 网络变化监听：`registerDefaultNetworkCallback`（onCreate 注册、onDestroy 注销、幂等）；Wi-Fi 断开直接置离线，恢复/能力验证通过时做有界重试探测（3 次/2s），回到前台单次探测；只探测不自动登录。
-- VPN 下认证：`CampusNetworkBinder` 在每次 probe/loginOnce 期间通过 `bindProcessToNetwork` 绑定底层 Wi-Fi，`finally` 中解绑；不关闭 VPN、不修改其他流量。系统/VPN 的强制全隧道或锁定策略仍可能限制直连，需真机验收。
-- 凭据安全存储：`AndroidKeystoreCredentialStore`（AES-256/GCM，Keystore 密钥不可导出，私目录偏好只落密文）；「记住密码」默认不勾选、不自动登录，仅登录确认成功后按勾选保存/清除。
-- 设置页：网络恢复/回到前台自动刷新两个开关（`AppSettingsStore` 持久化，默认开启）。
-- 后台自动重连：默认关闭；用户显式开启后由前台 Service 显示常驻通知，复用脱敏 `probe/loginOnce` 做 60 秒在线巡检、30 秒离线兜底和 CAPTIVE 自动认证；300 秒最小重登间隔、指数退避、连续三次失败后人工介入。通知可停止，结束本地会话会同时停止 UI 与后台会话；不新增开机自启或厂商后台限制绕过。
+- 网络变化监听：`registerDefaultNetworkCallback`（onCreate 注册、onDestroy 注销、幂等）；Wi-Fi 断开直接置离线，恢复/能力验证通过时经 `NetworkValidationGate` 去抖后做有界重试探测（3 次/2s），回到前台单次探测；只探测不自动登录。
+- VPN 下认证：`CampusNetworkBinder` 在每次 probe/loginOnce 期间通过 `bindProcessToNetwork` 绑定底层 Wi-Fi，`finally` 中解绑；不关闭 VPN、不修改其他流量。系统/VPN 的强制全隧道或锁定策略仍可能限制直连，已通过真机黑洞 VPN 验证。
+- 凭据安全存储：`AndroidKeystoreAccountStore`（AES-256/GCM，Keystore 密钥不可导出，私目录偏好只落密文，支持多账号、别名备注与 SSID 绑定预选）；「保存此账号」默认不勾选、不自动登录，仅登录确认成功后按勾选保存/清除。
+- 设置页：网络恢复/回到前台自动刷新两个开关（`AppSettingsStore` 持久化，默认开启）、后台自动重连开关、账号管理、本地会话结束、系统通知被禁用警告卡及 **App 内意见反馈**（`FeedbackForm` + `OpenFeedbackBridge`，支持离线本机队列与联网自动补发，详见 `docs/app-feedback.md`）。
+- 后台自动重连：默认关闭；用户显式开启后由前台 Service 显示常驻通知，复用脱敏 `probe/loginOnce` 做 60 秒在线巡检、30 秒离线兜底和 CAPTIVE 自动认证；300 秒最小重登间隔、指数退避、连续三次失败后人工介入。通知可停止，结束本地会话会同时停止 UI 与后台会话；进程被厂商杀死后重开 App 会通过 `BackgroundServiceRuntime` 自动恢复服务并修正陈旧状态。
 - 诊断事件：会话内最近 50 条脱敏事件（时间戳 + 登录/探测/网络/会话/设置变更），界面展示最新 10 条。
 - `PortalScreen` 已挂载独立的 `PortalCredentialForm`，表单回调接入 `PortalViewModel.loginWithCredentials()`。
-- 账号表单不持久化密码：密码只保存在当前 Composition 的 `remember` 状态中，并在提交回调前清空。
+- 账号表单不持久化密码：密码只保存在当前 Composition 的 `remember` 状态中，并在校验通过后、提交回调前清空。
 - 桥接创建成功后，ViewModel 才更新 `coreAvailable`；「重试登录」和「刷新状态」仅在核心可用且非忙碌时启用。
 - Python 返回值在 Kotlin 侧按白名单映射，不透传原始详情、异常、URL 或会话内容。
 - Python `requests.Session` 由 `MobileProbeBridge.close()` 显式释放；Kotlin 侧先调用 Python `close()`，再释放 Chaquopy 引用。
@@ -34,8 +34,6 @@
 
 - Capture：本校协议已实测确认，移动端首装可无 `protocol.json` fail-closed 登录，非必需；待协议变动或换校适配时再接入。
 - 黑洞 VPN 测试工装：只在 debug 变体（`app/src/debug/`）存在，release APK 不含任何调试入口。
-
-后台自动重连代码已接通，但尚未完成真机后台生命周期验收。厂商强杀、用户强制停止后的行为以系统实际表现为准，不承诺必然恢复。
 
 ## 构建方式
 

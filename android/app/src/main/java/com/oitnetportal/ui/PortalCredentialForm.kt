@@ -65,9 +65,9 @@ fun PortalCredentialForm(
         val usernameBlank = username.isBlank()
         val passwordBlank = password.isBlank()
         showValidationErrors = usernameBlank || passwordBlank
+        if (usernameBlank || passwordBlank) return
         val submittedPassword = password
         password = ""
-        if (usernameBlank || passwordBlank) return
 
         onSubmit(username.trim(), submittedPassword, saveAccount)
     }

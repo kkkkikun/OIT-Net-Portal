@@ -37,8 +37,12 @@ def _app_python_version() -> str:
 
 
 def _workflow_python_versions(text: str) -> list[str]:
-    """workflow 里 setup-python 声明的 python-version 列表。"""
-    return re.findall(r'python-version:\s*"([\d.]+)"', text)
+    """workflow 里 setup-python 或 matrix 声明的 python-version 列表。"""
+    direct = re.findall(r'python-version:\s*"([\d.]+)"', text)
+    matrix = []
+    for m in re.finditer(r"python-version:\s*\[([^\]]+)\]", text):
+        matrix.extend(re.findall(r'"([\d.]+)"', m.group(1)))
+    return direct + matrix
 
 
 def test_app_python_version_is_pinned_and_documented() -> None:

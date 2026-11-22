@@ -33,7 +33,20 @@ def test_linux_source_ip_prefers_physical_default_route(monkeypatch):
 
 
 def test_windows_source_ip_ignores_vpn_and_virtual_adapters(monkeypatch):
-    output = """Ethernet adapter Clash:\n   IPv4 Address. . . . . . . . . . . : 10.0.0.2\n   Default Gateway . . . . . . . . . : 10.0.0.1\n\nWireless LAN adapter Wi-Fi:\n   IPv4 Address. . . . . . . . . . . : 172.18.20.30\n   Default Gateway . . . . . . . . . : 172.18.20.1\n"""
+    # 真实 Windows ipconfig 在适配器标题行与缩进属性行之间带一个空行，
+    # 且双栈网络下默认网关首行是 IPv6、次行缩进才是 IPv4。
+    output = (
+        "Windows IP Configuration\r\n\r\n"
+        "Ethernet adapter Clash:\r\n\r\n"
+        "   Connection-specific DNS Suffix  . :\r\n"
+        "   IPv4 Address. . . . . . . . . . . : 10.0.0.2\r\n"
+        "   Default Gateway . . . . . . . . . : 10.0.0.1\r\n\r\n"
+        "无线局域网适配器 WLAN:\r\n\r\n"
+        "   连接特定的 DNS 后缀 . . . . . . . :\r\n"
+        "   IPv4 地址 . . . . . . . . . . . . : 172.18.20.30\r\n"
+        "   默认网关. . . . . . . . . . . . . : fe80::1%12\r\n"
+        "                                       172.18.20.1\r\n"
+    )
     monkeypatch.setattr("oit_portal.network.subprocess.run",
                         lambda *_args, **_kwargs: completed(output))
     monkeypatch.setattr("oit_portal.network.sys.platform", "win32")

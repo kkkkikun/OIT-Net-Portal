@@ -26,7 +26,9 @@ def _default_home() -> Path:
         if base:
             return Path(base) / APP_NAME
         return Path.home() / "AppData" / "Roaming" / APP_NAME
-    return Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))) / APP_NAME
+    xdg = os.environ.get("XDG_CONFIG_HOME")
+    base_dir = Path(xdg) if xdg else (Path.home() / ".config")
+    return base_dir / APP_NAME
 
 
 def _portable_home() -> Path | None:
@@ -60,14 +62,10 @@ class AppPaths:
 def resolve_paths() -> AppPaths:
     env = os.environ.get("OIT_PORTAL_HOME")
     home = Path(env).expanduser() if env else (_portable_home() or _default_home())
-    if is_termux():
-        # Termux：所有数据集中放在 ~/.config/oit-portal/（包括日志）。
-        # 早期版本用过 ~/.local/state/，但部分 Termux 环境（pkg/python 安装后）
-        # 该路径不可写——一旦 PermissionError 就会让 wizard/daemon 一起崩。
-        # 集中目录避免这种坑，也跟其他平台行为一致。
-        state = home / "logs"
-    else:
-        state = home / "logs"
+    # 所有平台（含 Termux）日志集中放在 <home>/logs/。
+    # 早期版本 Termux 用过 ~/.local/state/，但部分 Termux 环境该路径不可写，
+    # 集中目录规避 PermissionError，并与其他平台保持一致。
+    state = home / "logs"
     return AppPaths(
         home=home,
         config=home / "config.toml",

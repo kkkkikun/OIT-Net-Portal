@@ -5,16 +5,16 @@
     python3 scripts/check_feishu_feedback.py --webhook-url "https://.../webhook/event/xxx" \
         [--secret "token"]
 
-只发探测请求，不写业务数据；请先在飞书表格里确认没有多出记录（探测用 content 会带标记）。
+发送两条带【通道自检】标记的探测请求（带凭证 / 不带凭证），在飞书表格确认收到后可直接删除对应探测行。
 """
 
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 
-import requests
+from oit_portal.config import Config
+from oit_portal.network import create_session
 
 PROBE_CONTENT = "【通道自检】探测请求，确认后可直接删除"
 PROBE_PAYLOAD = {
@@ -29,10 +29,13 @@ PROBE_PAYLOAD = {
 
 
 def _post(url: str, headers: dict[str, str], payload: dict) -> tuple[int, str]:
+    session = create_session(Config())
     try:
-        response = requests.post(url, json=payload, headers=headers, timeout=15)
+        response = session.post(url, json=payload, headers=headers, timeout=15)
     except Exception as exc:
         return 0, f"连接失败：{type(exc).__name__}"
+    finally:
+        session.close()
     try:
         body = response.json()
     except Exception:

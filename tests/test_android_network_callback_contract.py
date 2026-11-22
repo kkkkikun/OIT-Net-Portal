@@ -23,22 +23,30 @@ VIEW_MODEL_SOURCE = VIEW_MODEL_PATH.read_text(encoding="utf-8")
 MANIFEST_SOURCE = MANIFEST_PATH.read_text(encoding="utf-8")
 
 
+def _extract_kt_func(source: str, header: str) -> str:
+    tail = source.split(header, maxsplit=1)[1]
+    start = tail.index("{")
+    depth = 0
+    for idx, ch in enumerate(tail[start:], start=start):
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return tail[:idx + 1]
+    return tail
+
+
 def _network_available_body() -> str:
-    return VIEW_MODEL_SOURCE.split(
-        "fun onNetworkAvailable()", maxsplit=1)[1].split(
-        "fun onAppForeground()", maxsplit=1)[0]
+    return _extract_kt_func(VIEW_MODEL_SOURCE, "fun onNetworkAvailable()")
 
 
 def _network_lost_body() -> str:
-    return VIEW_MODEL_SOURCE.split(
-        "fun onNetworkLost()", maxsplit=1)[1].split(
-        "fun onNetworkAvailable()", maxsplit=1)[0]
+    return _extract_kt_func(VIEW_MODEL_SOURCE, "fun onNetworkLost()")
 
 
 def _foreground_body() -> str:
-    return VIEW_MODEL_SOURCE.split(
-        "fun onAppForeground()", maxsplit=1)[1].split(
-        "private fun runOperation", maxsplit=1)[0]
+    return _extract_kt_func(VIEW_MODEL_SOURCE, "fun onAppForeground()")
 
 
 def test_manifest_declares_network_state_permission():

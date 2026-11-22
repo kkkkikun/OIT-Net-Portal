@@ -56,18 +56,19 @@ _PS_TOAST = r"""
 [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null
 $tmpl = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02)
 $texts = $tmpl.GetElementsByTagName('text')
-$texts.Item(0).AppendChild($tmpl.CreateTextNode('{title}')) > $null
-$texts.Item(1).AppendChild($tmpl.CreateTextNode('{text}')) > $null
+$texts.Item(0).AppendChild($tmpl.CreateTextNode($env:OIT_TOAST_TITLE)) > $null
+$texts.Item(1).AppendChild($tmpl.CreateTextNode($env:OIT_TOAST_TEXT)) > $null
 [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('oit-portal').Show([Windows.UI.Notifications.ToastNotification]::new($tmpl))
 """
 
 
 def notify(title: str, text: str) -> None:
+    import os
     try:
         subprocess.run(
-            ["powershell", "-NoProfile", "-NonInteractive", "-Command",
-             _PS_TOAST.format(title=title, text=text)],
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", _PS_TOAST],
             check=False, timeout=15,
+            env={**os.environ, "OIT_TOAST_TITLE": title, "OIT_TOAST_TEXT": text},
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
         logger.info("通知：%s - %s", title, text)

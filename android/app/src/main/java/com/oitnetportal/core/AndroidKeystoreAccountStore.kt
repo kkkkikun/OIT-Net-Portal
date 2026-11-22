@@ -24,9 +24,9 @@ class AndroidKeystoreAccountStore(context: Context) : AccountStore {
     private val prefs = context.applicationContext
         .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
-    override fun loadAccounts(): List<StoredAccount> {
+    override fun loadAccounts(): List<StoredAccount> = synchronized(LOCK) {
         migrateLegacyEntry()
-        return loadAccountsRaw()
+        loadAccountsRaw()
     }
 
     /** 不含迁移逻辑的原始读取，供迁移路径内部使用（避免递归）。 */
@@ -49,19 +49,20 @@ class AndroidKeystoreAccountStore(context: Context) : AccountStore {
                 }
             }
         } catch (_: Exception) {
-            // 密钥失效/数据损坏/格式错误：统一按无存账号处理，不泄露细节
+            // 密钥失效/数据损坏/格式错误：清理不可解密的旧条目，按无存账号处理，不泄露细节
+            prefs.edit().remove(KEY_ACCOUNTS).apply()
             emptyList()
         }
     }
 
-    override fun upsert(account: StoredAccount) {
+    override fun upsert(account: StoredAccount) = synchronized(LOCK) {
         if (account.username.isBlank() || account.password.isBlank()) return
         val updated = loadAccounts()
             .filterNot { it.id == account.id } + account
         persistAccounts(updated)
     }
 
-    override fun remove(accountId: String) {
+    override fun remove(accountId: String) = synchronized(LOCK) {
         val updated = loadAccounts().filterNot { it.id == accountId }
         persistAccounts(updated)
         if (prefs.getString(KEY_LAST_USED, null) == accountId) {
@@ -69,9 +70,11 @@ class AndroidKeystoreAccountStore(context: Context) : AccountStore {
         }
     }
 
-    override fun loadLastUsedId(): String? = prefs.getString(KEY_LAST_USED, null)
+    override fun loadLastUsedId(): String? = synchronized(LOCK) {
+        prefs.getString(KEY_LAST_USED, null)
+    }
 
-    override fun saveLastUsedId(accountId: String) {
+    override fun saveLastUsedId(accountId: String) = synchronized(LOCK) {
         prefs.edit().putString(KEY_LAST_USED, accountId).apply()
     }
 
@@ -125,8 +128,9 @@ class AndroidKeystoreAccountStore(context: Context) : AccountStore {
     /** 解密 Base64(1字节iv长度 | iv | 密文) 为 UTF-8 字符串。 */
     private fun decryptToString(packed: String): String {
         val raw = Base64.decode(packed, Base64.NO_WRAP)
-        val ivLength = raw[0].toInt()
-        require(raw.size > 1 + ivLength) { "corrupted entry" }
+        require(raw.isNotEmpty()) { "corrupted entry" }
+        val ivLength = raw[0].toInt() and 0xFF
+        require(ivLength in 12..16 && raw.size > 1 + ivLength) { "corrupted entry" }
         val iv = raw.copyOfRange(1, 1 + ivLength)
         val ciphertext = raw.copyOfRange(1 + ivLength, raw.size)
         val cipher = Cipher.getInstance(TRANSFORMATION)
@@ -134,11 +138,16 @@ class AndroidKeystoreAccountStore(context: Context) : AccountStore {
         return String(cipher.doFinal(ciphertext), Charsets.UTF_8)
     }
 
-    /** 获取或惰性生成 Keystore 中的 AES 密钥（与旧版单凭据存储共用同一密钥）。 */
+    /** 获取或惰性生成 Keystore 中的 AES 密钥（密钥损坏无法恢复时自动删除并重建）。 */
     private fun secretKey(): SecretKey {
         val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
-        (keyStore.getEntry(KEY_ALIAS, null) as? KeyStore.SecretKeyEntry)
-            ?.let { return it.secretKey }
+        val existing = runCatching {
+            (keyStore.getEntry(KEY_ALIAS, null) as? KeyStore.SecretKeyEntry)?.secretKey
+        }.getOrElse {
+            runCatching { keyStore.deleteEntry(KEY_ALIAS) }
+            null
+        }
+        if (existing != null) return existing
         val generator = KeyGenerator.getInstance(
             KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE,
         )
@@ -156,6 +165,7 @@ class AndroidKeystoreAccountStore(context: Context) : AccountStore {
     }
 
     private companion object {
+        val LOCK = Any()
         const val ANDROID_KEYSTORE = "AndroidKeyStore"
         const val KEY_ALIAS = "oit_portal_credential"
         const val TRANSFORMATION = "AES/GCM/NoPadding"

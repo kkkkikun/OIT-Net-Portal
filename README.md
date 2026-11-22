@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.9%2B-3776AB?logo=python&logoColor=white" alt="Python 3.9+"></a>
-  <img src="https://img.shields.io/badge/tests-436%20passed-brightgreen" alt="436 tests passed">
+  <img src="https://img.shields.io/badge/tests-440%20passed-brightgreen" alt="440 tests passed">
   <a href="https://github.com/kkkkikun/OIT-Net-Portal/releases"><img src="https://img.shields.io/badge/release-v1.0.1-blue" alt="v1.0.1"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License"></a>
 </p>
@@ -53,7 +53,7 @@ python -m pytest       # 全部用例（无网络）
 | **Android Termux** | `bash scripts/install_termux.sh` | Termux:Boot + 电池豁免 | [termux-setup](docs/termux-setup.md) |
 | **Linux (systemd)** | 解压对应架构离线包后 `./install.sh`；源码用 `bash scripts/install_linux.sh` | 系统服务（开机自启 + 崩溃自愈） | [linux-setup](docs/linux-setup.md) |
 
-> 📱 **Android 原生 App（路线B）**：`android/` 是基于 Kotlin + Jetpack Compose + Chaquopy 的原生客户端。手动登录、多账号、Keystore 凭据存储、自动刷新设置、脱敏诊断、**后台自动重连**（含 Android 13+ 通知权限路径）均已接通，并通过四轮真机验收 —— vivo V1936A / Android 9 与红米 K50 Ultra / HyperOS 2 / Android 15 上验证了覆盖安装、真实登录、断网恢复、进程被杀后自愈、通知权限允许与拒绝两条分支。Capture 有意不做（首装可无 `protocol.json` fail-closed 登录）。构建与现状见 [android/README.md](android/README.md)。
+> 📱 **Android 原生 App（路线B）**：`android/` 是基于 Kotlin + Jetpack Compose + Chaquopy 的原生客户端。手动登录、多账号、Keystore 凭据存储、自动刷新设置、脱敏诊断、**后台自动重连**（含 Android 13+ 通知权限路径）及**内嵌意见反馈**均已接通，并通过五轮真机验收 —— vivo V1936A / Android 9 与红米 K50 Ultra / HyperOS 2 / Android 15 上验证了覆盖安装、真实登录、断网恢复、进程被杀后自愈、通知权限允许与拒绝两条分支、在线/断网意见反馈。Capture 有意不做（首装可无 `protocol.json` fail-closed 登录）。构建与现状见 [android/README.md](android/README.md)。
 
 ## 📖 命令一览
 
@@ -67,6 +67,7 @@ python -m pytest       # 全部用例（无网络）
 | `oit-portal daemon` | 常驻守护：自动登录 + 保活 + 退避重试 |
 | `oit-portal stop` | 停止守护 |
 | `oit-portal login-info` | 验证码/会话失效时的人工登录引导 |
+| `oit-portal feedback <serve\|list\|export>` | 自托管反馈收集端、查看与导出反馈清单（[指南](docs/app-feedback.md)） |
 
 ## ⚙️ 保活策略
 

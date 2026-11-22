@@ -15,7 +15,7 @@ from __future__ import annotations
 import base64
 import binascii
 from types import SimpleNamespace
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, urljoin, urlsplit
 
 import requests
 
@@ -96,10 +96,7 @@ class SsoAdapter:
 
     @staticmethod
     def _absolutize(base: str, location: str) -> str:
-        if urlsplit(location).netloc:
-            return location
-        parts = urlsplit(base)
-        return f"{parts.scheme}://{parts.netloc}{location}"
+        return urljoin(base, location)
 
     @staticmethod
     def _extract_code(url: str) -> str | None:
@@ -159,11 +156,6 @@ class SsoAdapter:
 
     def login_password(self, challenge: PortalChallenge,
                        username: str, password: str) -> AuthCode:
-        if _is_captured(CAPTURED.login_endpoint):
-            raise ProtocolMismatch(
-                "SSO 登录端点尚未填充（protocol-notes C2.1）——"
-                "请先完成 docs/capture-guide.md 阶段 0 抓包"
-            )
         if CAPTURED.has_captcha:
             raise CaptchaRequired()
 
@@ -172,25 +164,56 @@ class SsoAdapter:
         if code_location:  # 万一表单页阶段就免密通过了
             return AuthCode(code=self._extract_code(code_location),
                             obtained_via="session_reuse")
-        # AES 密钥动态刷新（实测每次页面加载 key 都变：563a38***→4826c9***），
-        # 以当次登录页内联脚本为准，存量 protocol.json 里的 key 仅作无页面时兜底
-        aes_fresh = htmlutil.find_aes(resp.text)
+        if _is_captured(CAPTURED.login_endpoint):
+            # 未跑过 capture（无 protocol.json）：如当次页面是唯一明确的可解析 CryptoJS AES 表单
+            # （与移动端首装一致），则直接按当次页面参数完成登录；否则要求先跑 capture 向导
+            from ..mobile_sso import _parse_form, _require_same_origin, _strict_aes_params
+            page_url = resp.url or challenge.authorize_url
+            try:
+                _require_same_origin(page_url, challenge.authorize_url)
+                html = resp.text[:65536]
+                parsed_form = _parse_form(html, page_url, challenge.authorize_url)
+                aes_fresh = _strict_aes_params(html)
+            except ProtocolMismatch as exc:
+                raise ProtocolMismatch(
+                    "SSO 登录端点尚未填充（protocol-notes C2.1）——"
+                    "请先完成 docs/capture-guide.md 阶段 0 抓包"
+                ) from exc
+            endpoint = parsed_form.endpoint
+            username_field = parsed_form.username_field
+            password_field = parsed_form.password_field
+            extra = dict(parsed_form.hidden_fields)
+        else:
+            # AES 密钥动态刷新（实测每次页面加载 key 都变：563a38***→4826c9***），
+            # 以当次登录页内联脚本为准，存量 protocol.json 里的 key 仅作无页面时兜底
+            aes_fresh = htmlutil.find_aes(resp.text)
 
-        # 2) POST 账密（端点为相对路径时基于表单页 URL 解析）
-        endpoint = CAPTURED.login_endpoint
-        if not urlsplit(endpoint).netloc:
-            endpoint = self._absolutize(resp.url or challenge.authorize_url, endpoint)
-        # 隐藏字段动态刷新：CAS lt/execution 等每会话不同的 token 以当次表单页为准
-        extra = dict(CAPTURED.extra_fields)
-        if extra:
-            extra.update(htmlutil.hidden_values(resp.text, list(extra)))
+            # 2) POST 账密（端点为相对路径时基于表单页 URL 解析）
+            page_url = resp.url or challenge.authorize_url
+            endpoint = CAPTURED.login_endpoint
+            # 无 action 表单（C2.1）：当次页面 <form> 无 action 属性，或 login_endpoint 指向
+            # 含抓包当次 query 的 authorize 路径时，必须用当次挑战的 page_url 提交（保留当次 redirect_uri）
+            if (endpoint == ""
+                    or htmlutil.form_action(resp.text) == ""
+                    and urlsplit(endpoint).path == urlsplit(page_url).path):
+                endpoint = page_url
+            elif not urlsplit(endpoint).netloc:
+                endpoint = self._absolutize(page_url, endpoint)
+            username_field = CAPTURED.username_field
+            password_field = CAPTURED.password_field
+            # 隐藏字段动态刷新：CAS lt/execution 等每会话不同的 token 以当次表单页为准
+            extra = dict(CAPTURED.extra_fields)
+            if extra:
+                extra.update(htmlutil.hidden_values(resp.text, list(extra)))
         form = {
-            CAPTURED.username_field: username,
-            CAPTURED.password_field: self._transform_password(password,
-                                                              aes_fresh=aes_fresh),
+            username_field: username,
+            password_field: self._transform_password(password,
+                                                     aes_fresh=aes_fresh),
             **extra,
         }
-        logger.info("提交 SSO 账密登录（密码加密=%s）", CAPTURED.password_encrypt)
+        effective_mode = ("aes_ecb" if aes_fresh.get("mode") == "ECB" else "aes_cbc") \
+            if aes_fresh else CAPTURED.password_encrypt
+        logger.info("提交 SSO 账密登录（密码加密=%s）", effective_mode)
         try:
             post = self.session.post(endpoint, data=form, allow_redirects=False,
                                      timeout=self.cfg.advanced.timeout_sec)
@@ -205,7 +228,12 @@ class SsoAdapter:
             location = post.headers.get("Location", "")
             if not location:
                 raise ProtocolMismatch("登录响应 30x 但无 Location")
-            final, code_location = self._follow(self._absolutize(endpoint, location))
+            target = self._absolutize(endpoint, location)
+            direct_code = self._extract_code(target)
+            if direct_code is not None:
+                logger.info("账密登录成功，获得 code")
+                return AuthCode(code=direct_code, obtained_via="password")
+            final, code_location = self._follow(target)
         body = final.text[:4096]
         for marker in CAPTURED.reject_markers:
             if marker in body:
@@ -227,12 +255,12 @@ def _rsa_encrypt(raw: str, public_key: str) -> str:
         raise ProtocolMismatch(
             "需要 pycryptodome 才能复现 RSA 密码加密：pip install pycryptodome"
         ) from exc
-    key = RSA.import_key(public_key)
-    cipher = PKCS1_v1_5.new(key)
     try:
+        key = RSA.import_key(public_key)
+        cipher = PKCS1_v1_5.new(key)
         encrypted = cipher.encrypt(raw.encode("utf-8"))
         return base64.b64encode(encrypted).decode("ascii")
-    except (ValueError, binascii.Error) as exc:
+    except (ValueError, IndexError, TypeError, binascii.Error) as exc:
         raise ProtocolMismatch(f"RSA 加密失败（公钥格式?）: {exc}") from exc
 
 

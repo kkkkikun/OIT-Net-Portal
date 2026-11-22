@@ -33,9 +33,9 @@ class SingleInstanceLock:
         self._fh = None
 
     def acquire(self) -> bool:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._fh = open(self.path, "a+")
         try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self._fh = open(self.path, "a+")
             if sys.platform == "win32":
                 import msvcrt
                 self._fh.seek(0)
@@ -45,8 +45,9 @@ class SingleInstanceLock:
                 fcntl.flock(self._fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             return True
         except OSError:
-            self._fh.close()
-            self._fh = None
+            if self._fh is not None:
+                self._fh.close()
+                self._fh = None
             return False
 
     def release(self) -> None:
@@ -188,8 +189,9 @@ def _emit(callback: Callable[[DaemonEvent], None] | None, event: DaemonEvent) ->
 
 
 def _wait_for_next_run(stop: threading.Event, wake: threading.Event | None,
-                       delay: float) -> None:
-    if wake is None:
+                       delay: float,
+                       extra_wake: threading.Event | None = None) -> None:
+    if wake is None and extra_wake is None:
         stop.wait(delay)
         return
     deadline = time.monotonic() + delay
@@ -197,9 +199,15 @@ def _wait_for_next_run(stop: threading.Event, wake: threading.Event | None,
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             return
-        if wake.wait(min(remaining, 0.2)):
-            wake.clear()
+        if extra_wake is not None and extra_wake.is_set():
             return
+        if wake is not None:
+            if wake.wait(min(remaining, 0.2)):
+                wake.clear()
+                return
+        else:
+            if stop.wait(min(remaining, 0.2)):
+                return
 
 
 def run_daemon(cfg: Config, paths: AppPaths, *,
@@ -229,6 +237,7 @@ def run_daemon(cfg: Config, paths: AppPaths, *,
         except (ValueError, OSError):  # 非主线程 / 平台不支持
             pass
 
+    session: requests.Session | None = None
     try:
         session = create_session(cfg)
         from .auth import session_store
@@ -259,6 +268,7 @@ def run_daemon(cfg: Config, paths: AppPaths, *,
             # SSID 触发：连接上校园网时立即 mark_recovery 进入 burst
             if on_campus.is_set():
                 on_campus.clear()
+                consecutive_failures = 0
                 policy.mark_recovery()
 
             _emit(on_update, DaemonEvent("checking", "正在检测网络状态…"))
@@ -282,6 +292,12 @@ def run_daemon(cfg: Config, paths: AppPaths, *,
                     if online_since is None:
                         online_since = now
                     consecutive_failures = 0
+                elif outcome is FlowOutcome.NO_NETWORK:
+                    # 无网络仅探测，不计入登录连续失败次数（避免离线几分钟后恢复联网直接进 600s 深度退避）
+                    if online_since is not None:
+                        logger.warning("网络中断（%s: %s），进入重登流程",
+                                       outcome.value, result.detail)
+                    online_since = None
                 else:
                     consecutive_failures += 1
                     if online_since is not None:
@@ -327,9 +343,14 @@ def run_daemon(cfg: Config, paths: AppPaths, *,
             delay = policy.next_delay(outcome=outcome,
                                       consecutive_failures=consecutive_failures,
                                       online_since=online_since)
-            _wait_for_next_run(stop, wake_event, delay)
+            _wait_for_next_run(stop, wake_event, delay, extra_wake=on_campus)
     finally:
         logger.info("daemon 退出")
+        if session is not None:
+            try:
+                session.close()
+            except Exception:  # noqa: BLE001
+                pass
         lock.release()
         try:
             paths.pid.unlink(missing_ok=True)

@@ -10,10 +10,13 @@ dist/
 .kotlin/
 local.properties
 
-# 敏感文件永不入库
+# 敏感与运行时落盘文件永不入库
 config.toml
 credentials.toml
 session.json
+protocol.json
+capture-report.txt
+feedback.jsonl
 *.log
 *.har
 tests/fixtures/*.har

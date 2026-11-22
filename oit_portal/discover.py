@@ -85,13 +85,15 @@ def _blank(url: str, text: str = ""):
 def follow_entry(session: requests.Session, cfg: Config, hops: list[str] | None, *,
                  redirect_url: str | None = None,
                  page_url: str | None = None,
-                 page_body: str | None = None) -> EntryResult:
+                 page_body: str | None = None,
+                 stop_at_authorize: bool = False) -> EntryResult:
     """跟随入口链路直到登录表单页。
 
     - redirect_url 模式（302 劫持）：从该 URL 开始，challenge 立即解析
     - page_url + page_body 模式（200 注入）：注入页作为第一页
     - 30x 跟 Location；200 页面若有跳转目标且无 <form> 则继续跟
     - 链路中出现的 authorize URL 会被解析为 challenge
+    - stop_at_authorize=True 时：一旦发现 challenge 即停止，把 authorize 请求留给 SsoAdapter
     - 停止条件：无跳转目标的 200 页面（即表单页/死胡同）或跳数耗尽
     """
     hops = hops if hops is not None else []
@@ -106,6 +108,8 @@ def follow_entry(session: requests.Session, cfg: Config, hops: list[str] | None,
         resp = _blank(url, page_body or "")
 
     for _ in range(_MAX_HOPS):
+        if stop_at_authorize and challenge is not None:
+            break
         if resp is None:
             resp = session.get(url, allow_redirects=False,
                                timeout=cfg.advanced.timeout_sec)

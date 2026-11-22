@@ -466,11 +466,11 @@ def _looks_like_spa_catchall(resp: requests.Response, form_text: str) -> bool:
 
 def _attempt_login(session: requests.Session, cfg: Config, info: FormInfo,
                    endpoint: str, kind: str, username: str, password: str,
-                   mode: str, hops: list[str], form_text: str) -> tuple[str | None, requests.Response]:
+                   mode: str, hops: list[str], form_text: str) -> tuple[str | None, requests.Response, bool]:
     payload = {k: v for k, v in info.inputs.items()
                if k not in (info.username_field, info.password_field)}
-    payload[info.username_field] = username
-    payload[info.password_field] = _transform_password(password, mode, info)
+    payload[info.username_field or "username"] = username
+    payload[info.password_field or "password"] = _transform_password(password, mode, info)
     hops.append(f"POST {endpoint} [{kind}] 字段[{','.join(payload)}] 加密={mode}")
     kwargs = {"json" if kind == "json" else "data": payload}
     post = session.post(endpoint, allow_redirects=False,
@@ -481,18 +481,19 @@ def _attempt_login(session: requests.Session, cfg: Config, info: FormInfo,
     if 300 <= post.status_code < 400 and post.headers.get("Location"):
         final, final_url = _walk(session, urljoin(endpoint,
                                                   post.headers["Location"]), cfg, hops)
-        return _code_in(final_url), final
+        return _code_in(final_url), final, False
     # SPA JSON 响应：跳转 URL 藏在响应体里（{redirect:"http://...code=..."}）
     for m in re.finditer(r"https?://[^'\"\\\s<>]+", post.text[:4096]):
         url = m.group(0)
         if any(k in url for k in ("code=", "authorize", "login_sso", "redirect")):
             hops.append(f"  响应体发现跳转：{url[:160]}")
             final, final_url = _walk(session, url, cfg, hops)
-            return _code_in(final_url), final
+            return _code_in(final_url), final, False
     # SPA 路由兜底检测：POST 拿回来的文本与登录页首段高度相似
     if _looks_like_spa_catchall(post, form_text):
         hops.append(f"  ⚠ 命中 SPA 路由兜底（响应与登录页首段一致）→ 跳过此端点")
-    return None, post
+        return None, post, True
+    return None, post, False
 
 
 def _write_report(path: Path, title: str, sections: list[tuple[str, list[str]]]) -> None:
@@ -628,8 +629,8 @@ def run_capture(cfg: Config, paths: AppPaths) -> int:
             print(f"未找到登录表单，脚本扫描也无接口候选。请把 {report} 发给维护者。")
             return 1
         # SPA 无输入框可解析：字段名按通行约定猜测（用户名 username / 密码 password）
-        info.username_field = info.username_field or "username"
-        info.password_field = info.password_field or "password"
+    info.username_field = info.username_field or "username"
+    info.password_field = info.password_field or "password"
     if info.has_captcha:
         _write_report(report, "发现验证码", [("探测", pr_lines), ("跳转链", hops),
                                              ("表单分析", _summarize_form(info))])
@@ -679,18 +680,23 @@ def run_capture(cfg: Config, paths: AppPaths) -> int:
     final = None
     form_text = resp.text  # 用于 SPA 路由兜底检测
     for endpoint in endpoints:
+        skip_endpoint = False
         for kind in ("form", "json"):
             for mode in modes:
                 try:
-                    code, final = _attempt_login(session, cfg, info, endpoint, kind,
-                                                 username, password, mode, hops,
-                                                 form_text)
+                    code, final, is_catchall = _attempt_login(
+                        session, cfg, info, endpoint, kind,
+                        username, password, mode, hops, form_text)
                 except requests.RequestException as exc:
                     tried.append(f"{endpoint}[{kind}] {mode}: 请求异常 {type(exc).__name__}")
                     continue
                 except ProtocolMismatch as exc:
                     tried.append(f"{endpoint}[{kind}] {mode}: {exc}")
                     continue
+                if is_catchall:
+                    tried.append(f"{endpoint}[{kind}] {mode}: 命中 SPA 路由兜底，跳过该端点")
+                    skip_endpoint = True
+                    break
                 verify = probe(session, cfg)
                 tried.append(f"{endpoint}[{kind}] {mode}: "
                              f"code={'有' if code else '无'}，登录后状态={verify.status.value}")
@@ -708,7 +714,7 @@ def run_capture(cfg: Config, paths: AppPaths) -> int:
                     break
                 # 记录失败响应片段供分析（不含密码——密码只在请求里，不在响应里）
                 hops.append(f"  失败响应片段：{re_sp(final.text)}")
-            if logged_in:
+            if logged_in or skip_endpoint:
                 break
         if logged_in:
             break

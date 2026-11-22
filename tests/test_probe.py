@@ -50,10 +50,11 @@ def test_apple_success_body_means_online():
 
 def test_200_without_success_marker_is_captive():
     s = FakeSession()
-    s.add_url(MIUI, FakeResponse(302, headers={"Location": "http://portal/x"}))
-    # 池中第一项已判 CAPTIVE，直接返回
+    s.add_url(MIUI, FakeResponse(200, text="<html>please login</html>"))
+    s.add_url(APPLE, FakeResponse(200, text="<html>please login</html>"))
     result = probe(s, _cfg())
     assert result.status is ProbeStatus.CAPTIVE
+    assert result.redirect_url is None
 
 
 def test_all_unreachable_means_offline():

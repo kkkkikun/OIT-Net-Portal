@@ -6,7 +6,7 @@
 **作者的电脑不用开着任何服务。** OpenFeedback 跑在一台常开的服务器上（自托管），
 同学提交时 App 直连那台服务器。
 
-设计取舍与背景见 `openspec/changes/2026-11-05-switch-feedback-to-openfeedback/`。
+设计取舍与背景见 `openspec/changes/archive/2026-11-09-switch-feedback-to-openfeedback/`。
 
 ## 为什么不用问卷链接
 
@@ -105,10 +105,9 @@ cd android && ./gradlew assembleDebug
 
 ---
 
-## 改服务地址（不重新构建）
+## 改服务地址
 
-App 里可以随时改通道地址，存在本机设置里。换了网络、或者作者换了服务器时，
-可以在 App 内把地址改成新的，下次提交就走新地址。
+默认服务地址由构建期从 `android/local.properties`（或 CI 的 `OIT_FEEDBACK_ENDPOINT` 仓库变量）注入 `BuildConfigFeedback.DEFAULT_ENDPOINT`，并由 `FeedbackSettingsStore` 读取。作者更换域名或服务器时，更新 `local.properties` / 仓库变量重新构建即可。
 
 ---
 

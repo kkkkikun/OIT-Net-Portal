@@ -55,6 +55,14 @@ def test_version_matches_pyproject() -> None:
     assert __version__ == _pyproject_version()
 
 
+def test_fallback_version_literal_matches_pyproject() -> None:
+    """oit_portal/__init__.py 里未安装包时的回退字面量也必须与 pyproject.toml 一致。"""
+    init_text = (ROOT / "oit_portal" / "__init__.py").read_text(encoding="utf-8")
+    m = re.search(r'__version__\s*=\s*"([^"]+)"', init_text)
+    assert m, "oit_portal/__init__.py 里找不到回退版本号字面量"
+    assert m.group(1) == _pyproject_version()
+
+
 def test_version_matches_installed_distribution() -> None:
     """已安装时，__version__ 必须等于分发包元数据里的版本。"""
     from importlib.metadata import PackageNotFoundError, version as pkg_version

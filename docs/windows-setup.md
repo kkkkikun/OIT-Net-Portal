@@ -19,8 +19,8 @@
 powershell -ExecutionPolicy Bypass -File scripts\install_windows_tray.ps1
 ```
 
-脚本分四步执行：**① 检查运行环境**（tkinter 与 pystray/Pillow，缺了当场报错并给出修法）→
-**② 安装 `.[tray]` 依赖** → **③ 准备 `%APPDATA%\oit-portal\config.toml` 并写入当前用户的开机自启项** →
+脚本分四步执行：**① 检查运行环境**（检查 tkinter 是否随 Python 安装，缺了当场报错并给出修法）→
+**② 安装 `.[tray]` 依赖并校验 pystray/Pillow**（若托盘正在运行会先自动停止）→ **③ 准备 `%APPDATA%\oit-portal\config.toml` 并写入当前用户的开机自启项** →
 **④ 启动 App 并确认进程真的存活**（启动即退出会明确报错，不会假装成功）。
 首次启动会弹出账号设置窗口；输入校园网账号和密码，点击“保存并连接”。
 
@@ -68,9 +68,7 @@ powershell -ExecutionPolicy Bypass -File scripts\build_windows.ps1
 
 产物为 `dist\OIT-Portal.exe`，已包含 Python、托盘依赖和登录核心，可分发给未安装 Python 的机器。直接运行 exe 即可；首次使用仍需录入账号。
 
-构建脚本只安装构建期第三方依赖（`pystray` / `pillow` / `pyinstaller`），
-PyInstaller 通过 `--paths` 从源码树直接导入本项目 —— **不会重装本项目**，
-因此在托盘 App 正从同一个虚拟环境运行时构建也不会被文件锁挡住。
+构建脚本会**先停止正在运行的 `oit-portal-tray`**（避免入口 exe 被文件锁占用），再安装 `.[tray]` 与 `pyinstaller`，最后由 PyInstaller 生成单文件 `dist\OIT-Portal.exe`。
 如果 `OIT-Portal.exe` 本身正在运行，脚本会提示先退出再构建。
 
 > PyInstaller、注册表自启和托盘交互必须在 Windows 原生环境验证，WSL/Linux 下的测试不能代替这些验收。

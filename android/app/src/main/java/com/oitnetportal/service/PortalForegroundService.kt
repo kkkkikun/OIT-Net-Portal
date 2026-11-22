@@ -24,11 +24,13 @@ import com.oitnetportal.core.BackgroundReconnectStateStore
 import com.oitnetportal.core.BackgroundReconnectStatus
 import com.oitnetportal.core.BackgroundServiceRuntime
 import com.oitnetportal.core.ChaquopyPortalCoreBridge
+import com.oitnetportal.core.NetworkValidationGate
 import com.oitnetportal.core.PersistentBackgroundReconnectStateStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 
@@ -37,6 +39,7 @@ class PortalForegroundService : Service() {
     private lateinit var stateStore: BackgroundReconnectStateStore
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val commands = Channel<ServiceCommand>(Channel.UNLIMITED)
+    private val validationGate = NetworkValidationGate()
     private var core: ChaquopyPortalCoreBridge? = null
     private var controller: BackgroundReconnectController? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
@@ -71,6 +74,8 @@ class PortalForegroundService : Service() {
                 if (stateStore.enabled) {
                     startForeground(NOTIFICATION_ID, buildOngoingNotification())
                     commands.trySend(ServiceCommand.Restart)
+                } else {
+                    commands.trySend(ServiceCommand.Stop(preserveAttention = false, startId = startId))
                 }
             }
             else -> {
@@ -79,7 +84,9 @@ class PortalForegroundService : Service() {
                     startForeground(NOTIFICATION_ID, buildOngoingNotification())
                     commands.trySend(ServiceCommand.Start)
                 } else {
-                    requestStopSelf(startId)
+                    // startForegroundService 启动的服务即使立即停止也必须先完成 startForeground 契约
+                    startForeground(NOTIFICATION_ID, buildOngoingNotification())
+                    commands.trySend(ServiceCommand.Stop(preserveAttention = false, startId = startId))
                 }
             }
         }
@@ -111,6 +118,7 @@ class PortalForegroundService : Service() {
                 }
                 ServiceCommand.Destroy -> {
                     stopWorker()
+                    serviceScope.cancel()
                     break
                 }
             }
@@ -164,12 +172,14 @@ class PortalForegroundService : Service() {
     }
 
     private suspend fun stopService(preserveAttention: Boolean, startId: Int) {
+        if (!stateStore.enabled) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            if (!preserveAttention) {
+                stateStore.update(BackgroundReconnectStatus.STOPPED, "后台自动重连已关闭")
+            }
+        }
         stopWorker()
         if (stateStore.enabled) return
-        stopForeground(STOP_FOREGROUND_REMOVE)
-        if (!preserveAttention) {
-            stateStore.update(BackgroundReconnectStatus.STOPPED, "后台自动重连已关闭")
-        }
         requestStopSelf(startId)
     }
 
@@ -196,12 +206,16 @@ class PortalForegroundService : Service() {
                 network: Network,
                 networkCapabilities: NetworkCapabilities,
             ) {
-                if (networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) {
+                val validated = networkCapabilities.hasCapability(
+                    NetworkCapabilities.NET_CAPABILITY_VALIDATED
+                )
+                if (validationGate.onValidatedStateChanged(validated)) {
                     controller?.requestCalibration()
                 }
             }
 
             override fun onLost(network: Network) {
+                validationGate.reset()
                 controller?.requestCalibration()
             }
         }

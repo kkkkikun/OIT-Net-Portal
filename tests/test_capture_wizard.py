@@ -617,10 +617,10 @@ def test_capture_wizard_form_without_action(campus_server, tmp_path, monkeypatch
 
     protocol = json.loads((home / "protocol.json").read_text(encoding="utf-8"))
     # endpoint 必须是当前 authorize URL（带原始 query string）
-    assert protocol["sso"]["login_endpoint"].endswith(
-        "/auth/oauth/authorize?response_type=code&client_id=cli-test"
-        "&redirect_uri=http%3A%2F%2F127.0.0.1%3Axxx%2Feportal%2Flogin_sso.jsp"
-    ) or "auth/oauth/authorize" in protocol["sso"]["login_endpoint"]
+    assert protocol["sso"]["login_endpoint"].startswith(
+        "/auth/oauth/authorize?response_type=code&client_id=cli-test&redirect_uri="
+    )
+    assert "wlanuserip%3Dcafe" in protocol["sso"]["login_endpoint"]
     assert protocol["sso"]["password_encrypt"] == "aes_cbc"
     # 隐藏字段被作为 extra_fields 保存
     assert "fingerprint" in protocol["sso"]["extra_fields"]

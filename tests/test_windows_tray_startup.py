@@ -88,3 +88,10 @@ def test_install_script_has_offline_fallback() -> None:
 @pytest.mark.parametrize("needle", ["[1/4]", "[2/4]", "[3/4]", "[4/4]"])
 def test_install_script_has_four_numbered_steps(needle: str) -> None:
     assert needle in SCRIPT
+
+
+def test_install_script_checks_tray_deps_after_pip_install() -> None:
+    """全新环境未装 pystray/Pillow，必须在 pip install 之后才校验它们。"""
+    install_at = SCRIPT.index('pip install --quiet ".[tray]"')
+    check_at = SCRIPT.index("import pystray, PIL")
+    assert install_at < check_at, "不能在 pip install 之前就要求 pystray/PIL 已安装"

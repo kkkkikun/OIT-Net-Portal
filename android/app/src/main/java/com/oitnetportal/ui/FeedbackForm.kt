@@ -81,6 +81,7 @@ fun FeedbackForm(
                                 selected = category == option,
                                 onClick = { category = option },
                                 label = { Text(option.label) },
+                                enabled = !isSubmitting,
                             )
                         }
                     }

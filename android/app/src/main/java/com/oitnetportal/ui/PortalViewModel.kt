@@ -89,6 +89,9 @@ private val ALLOWED_DIAGNOSTIC_PREFIXES = listOf(
     "系统通知",
     "检测到",
     "后台服务已停止",
+    "后台自动重连",
+    "本地会话",
+    "前台自动刷新",
 )
 
 private const val MAX_DIAGNOSTIC_LINES = 10
@@ -425,13 +428,17 @@ class PortalViewModel(
                         ),
                     )
                     store.saveLastUsedId(username)
+                    val updatedAccounts = store.loadAccounts()
+                    val savedOk = updatedAccounts.any { it.id == username }
                     _uiState.update {
                         it.copy(
-                            savedAccounts = store.loadAccounts().map(StoredAccount::toInfo),
-                            notice = "账号已保存到本机加密存储",
+                            savedAccounts = updatedAccounts.map(StoredAccount::toInfo),
+                            notice = if (savedOk) "账号已保存到本机加密存储" else null,
                         )
                     }
-                    recordEvent("已保存账号到本机加密存储")
+                    if (savedOk) {
+                        recordEvent("已保存账号到本机加密存储")
+                    }
                 } else {
                     store.remove(username)
                     _uiState.update {
@@ -693,6 +700,7 @@ class PortalViewModel(
 
     override fun onCleared() {
         disposed = true
+        runCatching { feedbackBridge?.close() }
         // Best-effort cleanup: process death can still prevent this independent IO work.
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             operationMutex.withLock {
